@@ -66,7 +66,7 @@ export function subtilesForRecord(record: Mc3DRecord, model: Model): Subtile[] {
     if (!probes.some(([x, y]) => inFootprint(x, y, record.footprint))) continue;
     const code = `${String.fromCharCode(65 + r)}${c + 1}`, seed = `${record.id}:${code}`;
     tiles.push({
-      id: seed, model_id: model.id, code, name: `${record.productName} ${code}`,
+      id: seed, model_id: model.id, code, name: code,
       display_id: String(10000000 + (hash(seed) % 90000000)),
       bbox_west: west, bbox_east: east, bbox_south: south, bbox_north: north,
       accuracy: round(baseH * (0.7 + rand(seed + 'h') * 0.8)),

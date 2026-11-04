@@ -51,15 +51,16 @@ export function RealModel3DView({ area, target = null, demo, preferId, overlays,
     {demo && <Button size="sm" variant="outline" onClick={() => setShowDemo(true)}>הצג משטח דמו (לא מבצעי)</Button>}
   </>);
 
+  const badge = <div className="flex items-center gap-2 rounded border bg-popover/95 px-2 py-1 text-xs text-popover-foreground" dir="rtl">
+    <span className="font-semibold whitespace-nowrap">MapColonies 3D</span>
+    {matches.length > 1
+      ? <Select value={record.id} onValueChange={setChosenId}><SelectTrigger className="h-7 w-56 text-xs" aria-label="שכבת תלת־ממד"><SelectValue /></SelectTrigger><SelectContent>{matches.map(r => <SelectItem key={r.id} value={r.id}>{r.productName}</SelectItem>)}</SelectContent></Select>
+      : <span className="truncate" title={record.productName}>{record.productName}</span>}
+  </div>;
+
   return <div className="relative h-full w-full">
     <Suspense fallback={panel(<p className="text-muted-foreground">טוען מנוע תלת־ממד…</p>)}>
-      <Tiles3DView key={record.id} tilesetUrl={record.tilesetUrl!} bbox={record.bbox} focus={focus} overlays={overlays} onPickPoint={onPickPoint} onHoverPoint={onHoverPoint} />
+      <Tiles3DView key={record.id} tilesetUrl={record.tilesetUrl!} bbox={record.bbox} focus={focus} overlays={overlays} onPickPoint={onPickPoint} onHoverPoint={onHoverPoint} badge={badge} />
     </Suspense>
-    <div className="absolute top-2 left-2 z-[1001] flex items-center gap-2 rounded border bg-popover/95 px-2 py-1 text-xs text-popover-foreground" dir="rtl">
-      <span className="font-semibold">MapColonies 3D Tiles</span>
-      {matches.length > 1
-        ? <Select value={record.id} onValueChange={setChosenId}><SelectTrigger className="h-7 w-48 text-xs" aria-label="שכבת תלת־ממד"><SelectValue /></SelectTrigger><SelectContent>{matches.map(r => <SelectItem key={r.id} value={r.id}>{r.productName}</SelectItem>)}</SelectContent></Select>
-        : <span>{record.productName}</span>}
-    </div>
   </div>;
 }

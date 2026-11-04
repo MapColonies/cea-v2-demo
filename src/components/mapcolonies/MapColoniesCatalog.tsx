@@ -125,7 +125,7 @@ export function MapColoniesCatalog() {
         {mode === '3d' && selected?.tilesetUrl
           ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">טוען מנוע תלת־ממד…</p>}><Tiles3DView key={selected.id} tilesetUrl={selected.tilesetUrl} bbox={selected.bbox} /></Suspense>
           : <Footprints records={filtered} selected={selected} onSelect={select} />}
-        {selected && <aside aria-label="מטא־דאטה של השכבה" className="absolute bottom-2 right-2 z-[1000] w-[360px] max-w-[calc(100%-1rem)] max-h-[40%] overflow-y-auto rounded-md border bg-card/95 p-2 text-card-foreground">
+        {selected && <aside aria-label="מטא־דאטה של השכבה" className="absolute bottom-2 right-2 z-[1000] w-[340px] max-w-[45%] max-h-[40%] overflow-y-auto rounded-md border bg-card/95 p-2 text-card-foreground">
           <RecordMetadata record={selected} />
         </aside>}
       </div>

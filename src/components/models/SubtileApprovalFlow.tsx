@@ -437,7 +437,7 @@ export function SubtileApprovalFlow({
           <p className="font-semibold break-words">{model.name} · תת־אריח <span dir="ltr">{tileIdentifier(focusedTile)}</span></p>
           <p className="text-muted-foreground">{focusedTile.name || focusedTile.code} · דיוק אופקי {focusedTile.accuracy ?? '—'} מ׳ · דיוק אנכי {focusedTile.vertical_accuracy ?? '—'} מ׳</p>
         </div>}
-        <div className="flex-1 min-h-0 mt-3 flex gap-2">
+        <div className="flex-1 min-h-[260px] mt-3 flex gap-2">
         <section aria-label="שינויים ממתינים" className="w-32 md:w-44 shrink-0 flex flex-col min-h-0 border rounded-lg p-2">
           <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
             <h3 className="font-semibold">שינויים ממתינים ({changes.length})</h3>
@@ -557,7 +557,7 @@ export function SubtileApprovalFlow({
       <ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className="flex-1 min-h-[750px] md:min-h-0" dir="rtl">
         <ResizablePanel ref={panelRef} defaultSize={isMobile ? 35 : 36} minSize={isMobile ? 25 : 24} maxSize={isMobile ? 60 : 55} collapsible collapsedSize={0} onCollapse={() => setPanelCollapsed(true)} onExpand={() => setPanelCollapsed(false)}>
           <div className="h-full overflow-hidden flex flex-col min-h-0 px-2" data-testid="approval-sidebar">
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             {loading ? (
               <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
                 טוען תתי-אזורים...

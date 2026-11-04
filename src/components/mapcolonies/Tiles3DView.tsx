@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
@@ -16,7 +16,13 @@ import type { McBBox } from '@/lib/mapcolonies/csw';
 // BVH-accelerated picking: photorealistic tiles carry hundreds of thousands of triangles.
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
-THREE.Mesh.prototype.raycast = acceleratedRaycast;
+// While draping outlines, meshes whose BVH is not built yet are skipped (brute-force rays on photorealistic
+// meshes are too slow); outlines are re-draped once the BVHs exist.
+let bvhOnly = false;
+THREE.Mesh.prototype.raycast = function (this: THREE.Mesh, raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
+  if (bvhOnly && !this.geometry?.boundsTree) return;
+  acceleratedRaycast.call(this, raycaster, intersects);
+};
 
 export type OverlayStatus = 'approved' | 'unapproved' | 'rejected' | 'reference-approved' | 'reference-unapproved';
 export interface TileOverlay { id: string; bbox: McBBox; status: OverlayStatus; selected?: boolean; hovered?: boolean; }
@@ -32,6 +38,8 @@ interface Props {
   overlays?: TileOverlay[];
   onPickPoint?: (p: GeoPoint) => void;
   onHoverPoint?: (p: GeoPoint | null) => void;
+  /** Small label/selector shown above the coordinate readout (e.g. the layer name). */
+  badge?: ReactNode;
 }
 
 const EMPTY_READOUT = 'X —  Y —  Z —';
@@ -48,7 +56,7 @@ const STATUS_TOKEN: Record<OverlayStatus, string> = {
  * The tileset is re-oriented around its own centre with +Y up, readouts convert hits to WGS84 / Israel grid /
  * ellipsoidal height, and sub-tiles are draped onto the surface as a GeoJSON image overlay.
  */
-export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPoint, onHoverPoint }: Props) {
+export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPoint, onHoverPoint, badge }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const nav = useRef<Nav | null>(null);
   // Overlay plugin is attached lazily, only when there are sub-tiles to drape (it is costly for big photorealistic tilesets).
@@ -111,6 +119,7 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     scene.add(tiles.group);
 
     let models = 0;
+    let onBvhReady = () => {};
     // BVHs are built in idle time, never inside the tile load (a throw there would fail the tile).
     const bvhQueue: THREE.Mesh[] = [];
     let bvhScheduled = false;
@@ -123,7 +132,7 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
         const m = bvhQueue.shift()!;
         try { const g = m.geometry; if (g?.attributes.position && !g.boundsTree && (g.index || g.attributes.position.count % 3 === 0)) g.computeBoundsTree(); } catch { /* fall back to plain raycast */ }
       }
-      if (bvhQueue.length) { bvhScheduled = true; idle(buildBvh); }
+      if (bvhQueue.length) { bvhScheduled = true; idle(buildBvh); } else onBvhReady();
     };
     const onModel = ({ scene: model }: { scene: THREE.Object3D }) => {
       models++;
@@ -323,16 +332,22 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     const color = (name: string) => new THREE.Color().setStyle(token(name));
     type Item = { overlay: TileOverlay; line: Line2; material: LineMaterial; fill: THREE.Mesh | null; fillReady: boolean };
     const items = new Map<string, Item>();
-    let overlayGeometryKey = '', topHeight = 0, drapeDirty = false, lastDrape = 0;
-    const surfaceRay = new THREE.Raycaster(); surfaceRay.firstHitOnly = true;
+    let overlayGeometryKey = '', topHeight = 0, lastDrape = 0;
+    // Draping raycasts against heavy photorealistic meshes, so it runs as a small time-budgeted job per frame
+    // (never a burst that would freeze rendering and tile loading).
+    const lineQueue = new Set<string>(), fillQueue = new Set<string>(), incomplete = new Set<string>();
+    let lastRetry = 0;
+    const surfaceRay = new THREE.Raycaster(); surfaceRay.firstHitOnly = true; surfaceRay.far = 30000;
     const surfacePoint = (lat: number, lng: number, lift: number) => {
       const up = tiles.ellipsoid.getCartographicToNormal(lat * D2R, lng * D2R, new THREE.Vector3()).transformDirection(tiles.group.matrixWorld);
       const from = tiles.ellipsoid.getCartographicToPosition(lat * D2R, lng * D2R, topHeight + 500, new THREE.Vector3()).applyMatrix4(tiles.group.matrixWorld);
       surfaceRay.set(from, up.clone().negate());
-      const hit = surfaceRay.intersectObject(tiles.group, true)[0];
+      bvhOnly = true;
+      let hit: THREE.Intersection | undefined;
+      try { hit = surfaceRay.intersectObject(tiles.group, true)[0]; } finally { bvhOnly = false; }
       return hit ? hit.point.addScaledVector(up, lift) : null;
     };
-    const ring = (b: McBBox, n = 12) => {
+    const ring = (b: McBBox, n = 8) => {
       const c: [number, number][] = [[b.south, b.west], [b.south, b.east], [b.north, b.east], [b.north, b.west], [b.south, b.west]];
       const pts: [number, number][] = [];
       for (let e = 0; e < 4; e++) for (let i = 0; i < n; i++) { const t = i / n; pts.push([c[e][0] + (c[e + 1][0] - c[e][0]) * t, c[e][1] + (c[e + 1][1] - c[e][1]) * t]); }
@@ -342,6 +357,8 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     const drapeLine = (item: Item) => {
       const pts = ring(item.overlay.bbox).map(([lat, lng]) => surfacePoint(lat, lng, 2));
       const ok = pts.filter((p): p is THREE.Vector3 => p !== null);
+      // Surface not ready under part of the outline (tiles / BVH still loading): retry later.
+      if (ok.length < pts.length) incomplete.add(item.overlay.id); else incomplete.delete(item.overlay.id);
       if (ok.length < 2) { item.line.visible = false; return; }
       const geometry = new LineGeometry();
       geometry.setPositions(ok.flatMap(p => [p.x, p.y, p.z]));
@@ -377,20 +394,29 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
         item.material.dashed = reference;
         item.material.opacity = reference ? 0.7 : 1;
         item.line.renderOrder = o.selected ? 3 : o.hovered ? 2 : 1;
-        const showFill = Boolean(o.selected || o.hovered);
-        if (showFill && !item.fillReady && tiles.root) drapeFill(item);
+        // Only the selection gets a draped fill; hover stays outline-only (no extra raycasts while moving the mouse).
+        if (o.selected && !item.fillReady) fillQueue.add(o.id);
         if (item.fill) {
-          item.fill.visible = showFill;
-          (item.fill.material as THREE.MeshBasicMaterial).color.copy(color(o.selected ? '--selection' : base));
+          item.fill.visible = Boolean(o.selected);
+          (item.fill.material as THREE.MeshBasicMaterial).color.copy(color('--selection'));
         }
       }
     };
-    const drapeAll = () => {
-      if (!tiles.root) return;
-      for (const item of items.values()) { drapeLine(item); item.fillReady = false; }
-      restyle();
+    const redrapeAll = () => {
+      for (const [id, item] of items) { lineQueue.add(id); if (item.fillReady) { item.fillReady = false; if (item.overlay.selected) fillQueue.add(id); } }
       lastDrape = performance.now();
-      drapeDirty = false;
+    };
+    const drapeTick = (budgetMs: number) => {
+      if (!tiles.root || (!lineQueue.size && !fillQueue.size)) return;
+      const start = performance.now();
+      for (const id of fillQueue) {
+        if (performance.now() - start > budgetMs) return;
+        fillQueue.delete(id); const item = items.get(id); if (item?.overlay.selected) { drapeFill(item); if (item.fill) item.fill.visible = true; }
+      }
+      for (const id of lineQueue) {
+        if (performance.now() - start > budgetMs) return;
+        lineQueue.delete(id); const item = items.get(id); if (item) drapeLine(item);
+      }
     };
     const setOverlays = (list: TileOverlay[]) => {
       const key = list.map(o => `${o.id}@${o.bbox.west},${o.bbox.south},${o.bbox.east},${o.bbox.north}`).join('|');
@@ -405,15 +431,17 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
           line.visible = false; line.raycast = () => {};
           overlayGroup.add(line);
           items.set(o.id, { overlay: o, line, material, fill: null, fillReady: false });
+          lineQueue.add(o.id);
         }
-        drapeDirty = true;
+        fillQueue.clear();
       } else {
         for (const o of list) { const item = items.get(o.id); if (item) item.overlay = o; }
       }
       restyle();
     };
-    tiles.addEventListener('load-root-tileset', () => { topHeight = Math.max(tilesetExtent()?.top ?? 0, 0); drapeDirty = true; });
-    const onLoadEnd = () => { drapeDirty = true; };
+    tiles.addEventListener('load-root-tileset', () => { topHeight = Math.max(tilesetExtent()?.top ?? 0, 0); redrapeAll(); });
+    const onLoadEnd = () => { if (performance.now() - lastDrape > 3000) redrapeAll(); };
+    onBvhReady = () => { if (items.size) redrapeAll(); };
     tiles.addEventListener('tiles-load-end', onLoadEnd);
     ctx.current = { setOverlays, retry: () => { setTileErrors({ count: 0, last: '' }); setEmpty(false); tiles.resetFailedTiles(); } };
     setSceneRevision(v => v + 1);
@@ -433,7 +461,9 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       // Re-drape outlines as finer tiles arrive (throttled), so they hug the real surface.
       if (items.size && tiles.root) {
         const now = performance.now();
-        if (drapeDirty ? now - lastDrape > 400 : (now - lastDrape > 2000 && tilesLoading() > 0)) drapeAll();
+        if (!lineQueue.size && tilesLoading() > 0 && now - lastDrape > 5000) redrapeAll();
+        else if (!lineQueue.size && incomplete.size && now - lastRetry > 1500) { lastRetry = now; incomplete.forEach(id => lineQueue.add(id)); }
+        drapeTick(4);
       }
       controls.update();
       camera.updateMatrixWorld();
@@ -521,19 +551,22 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       <p><b>לחיצה</b> — בחירת תת־אריח</p>
     </div>}
 
-    {(stats.loading > 0 || progress < 100) && !error && <div className="absolute bottom-16 left-2 rounded border bg-popover/95 px-2 py-1 text-xs text-popover-foreground" role="status" dir="rtl">
-      טוען אריחים… {stats.loaded} הוצגו · {stats.loading} בטעינה
-      {stats.refused > 0 && <span className="block text-muted-foreground">זיכרון האריחים מלא — אזורים רחוקים יוצגו ברזולוציה נמוכה</span>}
-    </div>}
-    {tileErrors.count > 0 && !error && <div className="absolute bottom-28 left-2 z-[1001] flex max-w-sm items-center gap-2 rounded border border-destructive/50 bg-popover/95 px-2 py-1 text-xs text-destructive" role="status" dir="rtl">
-      <span>{tileErrors.count} אריחים לא נטענו — {tileErrors.last}</span>
-      <button type="button" className="shrink-0 rounded border px-2 py-0.5 text-popover-foreground hover:bg-accent" onClick={() => ctx.current?.retry()}>נסה שוב</button>
-    </div>}
-    {empty && !error && !tileErrors.count && <div className="absolute inset-x-0 top-1/3 mx-auto w-fit max-w-md rounded border bg-popover/95 p-3 text-center text-sm text-popover-foreground">ה־tileset נטען אך שרת האריחים לא החזיר גאומטריה. בדקו בקונסול (F12) את שגיאות 3D Tiles ושלחו אותן.</div>}
-    <div className="absolute bottom-2 left-2 rounded border bg-popover/95 p-2 text-xs font-mono text-popover-foreground" dir="ltr" data-testid="tiles-readout">
-      {readout}
-      <span className="block text-muted-foreground">{geo || 'WGS84 —'} · Israel Grid · גובה אליפסואידי</span>
+    <div className="pointer-events-none absolute bottom-2 left-2 z-[1001] flex max-w-[min(26rem,calc(100%-5rem))] flex-col items-start gap-1">
+      {tileErrors.count > 0 && !error && <div className="pointer-events-auto flex items-center gap-2 rounded border border-destructive/50 bg-popover/95 px-2 py-1 text-xs text-destructive" role="status" dir="rtl">
+        <span>{tileErrors.count} אריחים לא נטענו — {tileErrors.last}</span>
+        <button type="button" className="shrink-0 rounded border px-2 py-0.5 text-popover-foreground hover:bg-accent" onClick={() => ctx.current?.retry()}>נסה שוב</button>
+      </div>}
+      {(stats.loading > 0 || progress < 100) && !error && <div className="rounded border bg-popover/95 px-2 py-1 text-xs text-popover-foreground" role="status" dir="rtl">
+        טוען אריחים… {stats.loaded} הוצגו · {stats.loading} בטעינה
+        {stats.refused > 0 && <span className="block text-muted-foreground">זיכרון האריחים מלא — אזורים רחוקים יוצגו ברזולוציה נמוכה</span>}
+      </div>}
+      {badge && <div className="pointer-events-auto">{badge}</div>}
+      <div className="rounded border bg-popover/95 p-2 text-xs font-mono text-popover-foreground" dir="ltr" data-testid="tiles-readout">
+        {readout}
+        <span className="block text-muted-foreground">{geo || 'WGS84 —'} · Israel Grid · גובה אליפסואידי</span>
+      </div>
     </div>
+    {empty && !error && !tileErrors.count && <div className="absolute inset-x-0 top-1/3 mx-auto w-fit max-w-md rounded border bg-popover/95 p-3 text-center text-sm text-popover-foreground">ה־tileset נטען אך שרת האריחים לא החזיר גאומטריה. בדקו בקונסול (F12) את שגיאות 3D Tiles ושלחו אותן.</div>}
     {error && <p className="absolute inset-0 flex items-center justify-center bg-background/90 p-6 text-center text-destructive">{error}</p>}
     {failure && <p className="absolute inset-0 flex items-center justify-center bg-background text-destructive">תצוגת תלת־ממד אינה זמינה בדפדפן זה</p>}
   </div>;

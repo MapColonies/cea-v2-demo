@@ -12,8 +12,10 @@ import { tileOverlays } from '@/lib/mapcolonies/overlays';
 const approved = (tile: Subtile) => tile.is_approved_for_coordinates;
 const readOnly = () => {};
 
-export function CatalogModelView({ model, referenceModels, mode, onModeChange }: {
+export function CatalogModelView({ model, referenceModels, mode, onModeChange, allModels = [], onSelectModel }: {
   model: Model | null; referenceModels: Model[]; mode: 'map' | '3d'; onModeChange: (mode: 'map' | '3d') => void;
+  /** Shown as an overview (all footprints) while no model is selected. */
+  allModels?: Model[]; onSelectModel?: (m: Model) => void;
 }) {
   const [tiles,setTiles]=useState<Subtile[]>([]),[error,setError]=useState('');
   const [target,setTarget]=useState<Target|null>(null);
@@ -32,7 +34,7 @@ export function CatalogModelView({ model, referenceModels, mode, onModeChange }:
       </div>
     </div>
     {error&&<p className="text-xs text-destructive">{error}</p>}<div className="relative isolate z-0 flex-1 min-h-0 overflow-hidden">
-      {mode === '3d' && model ? <RealModel3DView area={boundsOf(model)} preferId={model.id} target={target} overlays={tileOverlays({model,referenceModels,subtiles:tiles.filter(t=>t.model_id===model.id),references:tiles.filter(t=>t.model_id!==model.id),effectiveApproved:approved})} demo={()=><DemoSurfaceView model={model} subtiles={tiles.filter(t=>t.model_id===model.id)} referenceModels={referenceModels} referenceSubtiles={tiles.filter(t=>t.model_id!==model.id)} effectiveApproved={approved} onToggle={readOnly} target={target}/>}/> : <ModelMap model={model} referenceModels={referenceModels} subtiles={tiles} target={target}/>}
+      {mode === '3d' && model ? <RealModel3DView area={boundsOf(model)} preferId={model.id} target={target} overlays={tileOverlays({model,referenceModels,subtiles:tiles.filter(t=>t.model_id===model.id),references:tiles.filter(t=>t.model_id!==model.id),effectiveApproved:approved})} demo={()=><DemoSurfaceView model={model} subtiles={tiles.filter(t=>t.model_id===model.id)} referenceModels={referenceModels} referenceSubtiles={tiles.filter(t=>t.model_id!==model.id)} effectiveApproved={approved} onToggle={readOnly} target={target}/>}/> : <ModelMap model={model} referenceModels={referenceModels} subtiles={tiles} target={target} overview={model ? [] : allModels} onSelectOverview={onSelectModel}/>}
       <div className="absolute top-2 left-12 right-2 z-[9999] flex justify-center pointer-events-none" dir="rtl"><div className="max-w-full border rounded-md bg-popover/95 text-popover-foreground p-2 shadow pointer-events-auto" aria-label="קואורדינטות למציאת גובה"><CoordinateTool onGo={setTarget}/>{target&&<p className="mt-1 max-w-md text-xs text-muted-foreground">{targetModel?`${targetModel.name} • ${targetTile?.display_id||'מחוץ לתת־אזור'}`:'היעד מחוץ למודלים המוצגים'}{targetModel?.is_rejected?' • לא מאושר — לא זמין לחילוץ':''}{target.z!==undefined?` • Z מבוקש ${target.z} מ׳`:''}</p>}</div></div>
     </div>
   </div>;

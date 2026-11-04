@@ -32,3 +32,5 @@
 - useMapColoniesCatalog keeps the last resolved catalogue so components mounted later (e.g. the approval workspace) get data on first render; the workspace also reloads its grid when the catalogue arrives. src/pages/ApprovalFlow.e2e.test.tsx covers catalogue → workspace → demo save.
 - Removed unused legacy components (ModelViewer, ApprovalDialog, RevokeApprovalDialog, ApprovalHistory).
 - DEMO MODE approvals are open to every signed-in user (isAdmin is derived from the session in SubtileApprovalFlow), since nothing is persisted outside the browser.
+- Sub-tile outline draping runs as a time-budgeted job (≈4 ms per frame) and raycasts only meshes whose BVH is built; outlines with gaps are retried until the surface is ready. Hover is outline-only; only the selection gets a draped fill. Never drape synchronously in a burst — it freezes rendering and tile loading on real photorealistic data.
+- 3D overlays live in one bottom-left stack (errors, loading, layer badge, readout) and navigation sits top-right, so they never overlap the 2D legend, coordinate tool or mode toggle. With no model selected the catalogue map shows every model footprint (clickable).

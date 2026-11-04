@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useRealModels } from '@/hooks/useRealModels';
+import { EnvironmentSwitcher } from '@/components/mapcolonies/EnvironmentSwitcher';
+import { mcEnvStore, useMapColoniesEnv } from '@/lib/mapcolonies/environments';
 import {
   ModelIdentificationWizard,
   statusOf,
@@ -19,6 +21,10 @@ type Model = Database['public']['Tables']['models']['Row'];
 export function Dashboard() {
   // Approval catalogue = real MapColonies 3D Tiles models; approvals are demo-only (browser-local).
   const { models, subtileStats, loading, error: catalogError, reload } = useRealModels();
+  const env = useMapColoniesEnv();
+  const envLabel = mcEnvStore.environment().label;
+  // Models (and their ids) differ per environment: drop references chosen in the previous one.
+  useEffect(() => { setReferenceIds(new Set()); }, [env]);
   const [confirmedModel, setConfirmedModel] = useState<Model | null>(null);
   const [session, setSession] = useState<ApprovalSession | null>(null);
   const [referenceIds, setReferenceIds] = useState<Set<string>>(new Set());
@@ -35,7 +41,7 @@ export function Dashboard() {
     <div className="h-screen bg-background flex flex-col overflow-hidden" dir="rtl">
       <header className="border-b border-border bg-card px-4 py-3 flex-shrink-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex min-w-[20rem] flex-1 items-center gap-3">
             {confirmedModel ? (
               <Button variant="ghost" size="icon" onClick={() => setConfirmedModel(null)}>
                 <ArrowRight className="w-5 h-5" />
@@ -46,18 +52,19 @@ export function Dashboard() {
               </div>
             )}
             <div className="min-w-0">
-              <h1 className="text-lg font-semibold">מנגנון אישור מודל לחילוץ נ.צ. — גרסה 2</h1>
-              <p className="text-sm text-muted-foreground">
+              <h1 className="truncate text-lg font-semibold">מנגנון אישור מודל לחילוץ נ.צ. — גרסה 2</h1>
+              <p className="truncate text-sm text-muted-foreground">
                 {confirmedModel
                   ? confirmedModel.name
                   : view === 'mapcolonies'
-                  ? 'קטלוג MapColonies — מודלים תלת־ממדיים פוטוריאליסטיים'
-                  : `${models.length} מודלים • ${approvedModels} מאושרים • ${partialModels} מאושרים חלקית`}
+                  ? `קטלוג MapColonies ${envLabel} — מודלים תלת־ממדיים פוטוריאליסטיים`
+                  : `${models.length} מודלים • ${approvedModels} מאושרים • ${partialModels} מאושרים חלקית • סביבת ${envLabel}`}
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <EnvironmentSwitcher disabled={Boolean(confirmedModel)} />
             <div className="flex items-center gap-2">
               <User className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm">{username || 'משתמש'}</span>
@@ -88,7 +95,7 @@ export function Dashboard() {
 
       <div className="flex-1 overflow-hidden">
         {view === 'mapcolonies' && !confirmedModel ? (
-          <MapColoniesCatalog />
+          <MapColoniesCatalog key={env} />
         ) : catalogError && !models.length ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="text-destructive">{catalogError}</p>
@@ -118,6 +125,7 @@ export function Dashboard() {
           </div>
         ) : (
           <ModelIdentificationWizard
+            key={env}
             models={models}
             subtileStats={subtileStats}
             onModelConfirmed={setConfirmedModel}

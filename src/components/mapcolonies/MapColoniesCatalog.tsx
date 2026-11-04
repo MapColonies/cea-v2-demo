@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshCw, Search, Box } from 'lucide-react';
 import { BasemapLayers } from '@/components/map/BasemapLayers';
 import { mapColoniesConfig } from '@/lib/mapcolonies/client';
+import { mcEnvStore } from '@/lib/mapcolonies/environments';
 import { useMapColoniesCatalog } from '@/hooks/useMapColoniesCatalog';
 import { is3DTilesRecord, type Mc3DRecord } from '@/lib/mapcolonies/csw';
 
@@ -83,7 +84,7 @@ export function MapColoniesCatalog() {
     <section className="flex flex-col min-h-0 border rounded-md p-2" aria-label="קטלוג MapColonies">
       <div className="shrink-0 space-y-2 pb-2 border-b">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-semibold text-sm">קטלוג 3D — MapColonies</h2>
+          <h2 className="font-semibold text-sm">קטלוג 3D — MapColonies <span className="text-muted-foreground">({mcEnvStore.environment().label})</span></h2>
           <Button size="icon" variant="ghost" className="h-7 w-7" title="רענון קטלוג" aria-label="רענון קטלוג" onClick={reload} disabled={loading}><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
         </div>
         <div className="relative"><Search className="absolute right-3 top-3 w-4 h-4 text-muted-foreground" /><Input aria-label="חיפוש שכבה" placeholder="חפש לפי שם, אזור או מזהה..." value={search} onChange={e => setSearch(e.target.value)} className="pr-10" /></div>

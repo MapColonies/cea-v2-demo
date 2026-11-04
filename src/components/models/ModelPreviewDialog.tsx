@@ -3,6 +3,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { DemoSurfaceView } from '@/components/map/DemoSurfaceView';
+import { RealModel3DView } from '@/components/mapcolonies/RealModel3DView';
+import { boundsOf } from '@/lib/mapcolonies/match';
 import { ModelMetadata } from './ModelMetadata';
 import type { Model, Subtile } from '@/lib/cea/rules';
 
@@ -32,7 +34,7 @@ export function ModelPreviewDialog({ model, open, onOpenChange, onContinue }: Mo
             <div className="min-w-0">
               <DialogTitle className="truncate text-lg">{model.name}</DialogTitle>
               <DialogDescription className="sr-only">תצוגת מודל לקריאה בלבד</DialogDescription>
-              <Badge variant="outline" className="mt-1 text-warning">דמו — משטח וגובה מדומים</Badge>
+              <Badge variant="outline" className="mt-1">מודל תלת־ממד אמיתי — MapColonies 3D Tiles</Badge>
             </div>
             {onContinue && (
               <Button className="shrink-0" onClick={() => onContinue(model)}>
@@ -44,14 +46,19 @@ export function ModelPreviewDialog({ model, open, onOpenChange, onContinue }: Mo
           </div>
         </DialogHeader>
         <div className="absolute inset-x-0 bottom-0 top-20 isolate z-0">
-          <DemoSurfaceView
-            model={model}
-            subtiles={noSubtiles}
-            referenceModels={noReferences}
-            referenceSubtiles={noSubtiles}
-            effectiveApproved={approved}
-            onToggle={readOnly}
-            target={null}
+          <RealModel3DView
+            area={boundsOf(model)}
+            demo={() => (
+              <DemoSurfaceView
+                model={model}
+                subtiles={noSubtiles}
+                referenceModels={noReferences}
+                referenceSubtiles={noSubtiles}
+                effectiveApproved={approved}
+                onToggle={readOnly}
+                target={null}
+              />
+            )}
           />
         </div>
         <aside

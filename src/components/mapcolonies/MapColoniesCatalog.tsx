@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshCw, Search, Box } from 'lucide-react';
 import { BasemapLayers } from '@/components/map/BasemapLayers';
-import { loadMapColoniesCatalog, mapColoniesConfig } from '@/lib/mapcolonies/client';
+import { mapColoniesConfig } from '@/lib/mapcolonies/client';
+import { useMapColoniesCatalog } from '@/hooks/useMapColoniesCatalog';
 import { is3DTilesRecord, type Mc3DRecord } from '@/lib/mapcolonies/csw';
 
 // Three.js + 3d-tiles-renderer load only when a 3D layer is opened.
@@ -57,35 +58,19 @@ function RecordMetadata({ record }: { record: Mc3DRecord }) {
 }
 
 export function MapColoniesCatalog() {
-  const [records, setRecords] = useState<Mc3DRecord[]>([]);
-  const [matched, setMatched] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const { records, matched, loading, error, reload } = useMapColoniesCatalog();
   const [search, setSearch] = useState('');
   const [onlyTiles, setOnlyTiles] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<'map' | '3d'>('map');
-  const [revision, setRevision] = useState(0);
 
+  // Open the first real 3D Tiles model as soon as the catalogue arrives so the screen never starts empty.
   useEffect(() => {
-    let live = true;
-    setLoading(true); setError('');
-    loadMapColoniesCatalog()
-      .then(result => {
-        if (!live) return;
-        setRecords(result.records); setMatched(result.matched);
-        // Open the first real 3D Tiles model immediately so the screen never starts empty.
-        setSelectedId(current => {
-          if (current && result.records.some(r => r.id === current)) return current;
-          const first = result.records.find(r => r.tilesetUrl);
-          if (first) setMode('3d');
-          return first?.id ?? null;
-        });
-      })
-      .catch(e => { if (live) setError(e instanceof Error ? e.message : 'טעינת הקטלוג נכשלה'); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [revision]);
+    if (!records.length || (selectedId && records.some(r => r.id === selectedId))) return;
+    const first = records.find(r => r.tilesetUrl);
+    setSelectedId(first?.id ?? null);
+    if (first) setMode('3d');
+  }, [records, selectedId]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -99,7 +84,7 @@ export function MapColoniesCatalog() {
       <div className="shrink-0 space-y-2 pb-2 border-b">
         <div className="flex items-center justify-between gap-2">
           <h2 className="font-semibold text-sm">קטלוג 3D — MapColonies</h2>
-          <Button size="icon" variant="ghost" className="h-7 w-7" title="רענון קטלוג" aria-label="רענון קטלוג" onClick={() => setRevision(v => v + 1)} disabled={loading}><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
+          <Button size="icon" variant="ghost" className="h-7 w-7" title="רענון קטלוג" aria-label="רענון קטלוג" onClick={reload} disabled={loading}><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
         </div>
         <div className="relative"><Search className="absolute right-3 top-3 w-4 h-4 text-muted-foreground" /><Input aria-label="חיפוש שכבה" placeholder="חפש לפי שם, אזור או מזהה..." value={search} onChange={e => setSearch(e.target.value)} className="pr-10" /></div>
         <div className="flex gap-1">
@@ -110,7 +95,7 @@ export function MapColoniesCatalog() {
       </div>
       <div className="flex-1 overflow-auto min-h-0 py-2 space-y-1">
         {loading && [1, 2, 3, 4].map(i => <Skeleton key={i} className="h-14 w-full" />)}
-        {!loading && error && <div className="p-3 text-sm text-destructive space-y-2"><p>{error}</p><Button size="sm" variant="outline" onClick={() => setRevision(v => v + 1)}>נסה שוב</Button></div>}
+        {!loading && error && <div className="p-3 text-sm text-destructive space-y-2"><p>{error}</p><Button size="sm" variant="outline" onClick={reload}>נסה שוב</Button></div>}
         {!loading && !error && filtered.map(r => <button key={r.id} type="button" onClick={() => select(r)}
           className={`w-full text-right border rounded-md p-2 flex gap-2 items-start hover:bg-accent/60 ${r.id === selectedId ? 'border-primary bg-accent' : 'border-border'}`}>
           <Box className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />

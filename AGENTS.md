@@ -1,7 +1,7 @@
 # Project architecture
 - Resolve UI permissions from all protected user_roles rows, prioritizing admin over viewer; an account can legitimately hold both roles and server-side checks remain authoritative.
 - The routed Dashboard owns shared catalog selection; ModelsList is the single catalog implementation to keep filters and counters consistent.
-- Catalog eye previews render inline using the read-only synthetic renderer and a 2D/3D switch without unmounting the catalog, preserving filter state and the existing confirmation flow.
+- Catalog eye previews render inline with a 2D/3D switch without unmounting the catalog, preserving filter state and the existing confirmation flow.
 - Catalog metadata visibility and collapse state are independent of model selection, so hiding details preserves the map and confirmation target; the shared coordinate tool accepts an optional inline field to avoid duplicate catalog inputs.
 - Pending approval deltas are independent of filtered tile results; the side list shows the complete staged set and undo removes only the chosen delta.
 - Shared bounding-box intersection determines eligible touching reference models; both renderers show all their read-only subtiles using muted status colors and dashed borders.
@@ -9,7 +9,7 @@
 - Map/list selection, hover and visible-tile state are owned by the approval panel; shared spatial visibility helpers keep 2D and synthetic 3D behavior consistent.
 - The approval workspace uses the shared resizable panels; map framing runs on entry/navigation, never from selection state, to preserve camera stability.
 - Vite must deduplicate React/React DOM and prebundle the resizable workspace dependency at startup to avoid mixed React instances after live updates.
-- Leaflet renders the 2D reference map and Three.js renders explicitly synthetic demo surfaces; no demo elevation is an operational measurement.
+- Leaflet renders the 2D reference map. Every 3D button (catalog view, eye preview, approval map) opens RealModel3DView: the best-covering real MapColonies 3D Tiles layer for the model bbox (src/lib/mapcolonies/match.ts), framed on the model area. The synthetic Three.js surface is only shown when no real layer covers the area and the user explicitly asks for it; no demo elevation is an operational measurement.
 - Approval sessions are verified by an authenticated edge function using password verification for every authentication provider, and bound to the original auth session; the UI always collects fresh approver details before saving, while server RPCs enforce admin roles, time limits and edit-lock ownership.
 - Approval deltas and audit logs commit together through the protected save RPC; direct client approval writes are denied to prevent bypasses.
 - Bulk approval controls acquire the protected model edit lock on demand before staging changes, so selecting polygons does not require a separate edit-mode action.

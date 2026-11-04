@@ -87,10 +87,33 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     const draco = new DRACOLoader(); // decoders bundled by three via import.meta.url
     const ktx2 = new KTX2Loader().detectSupport(renderer);
     tiles.registerPlugin(new GLTFExtensionsPlugin({ rtc: true, dracoLoader: draco, ktxLoader: ktx2 }));
+    // Photorealistic meshes carry baked-in lighting: render textured materials unlit (as Cesium does) and sharpen
+    // oblique views with anisotropic filtering. Registered before the overlay plugin so its wrapping still applies.
+    const anisotropy = renderer.capabilities.getMaxAnisotropy();
+    tiles.registerPlugin({
+      name: 'PHOTOREALISTIC_MATERIALS',
+      priority: -20, // before ImageOverlayPlugin (-15), which wraps the final materials
+      processTileModel: (model: THREE.Object3D) => {
+        model.traverse(o => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const swap = (m: THREE.Material) => {
+            const src = m as THREE.MeshStandardMaterial;
+            if (!src.map || src.type === 'MeshBasicMaterial') return m;
+            src.map.anisotropy = anisotropy;
+            const basic = new THREE.MeshBasicMaterial({ map: src.map, color: src.color, vertexColors: src.vertexColors, side: src.side, transparent: src.transparent, opacity: src.opacity, alphaTest: src.alphaTest });
+            basic.defines = {};
+            src.dispose();
+            return basic;
+          };
+          mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
+        });
+      },
+    });
     // Orient from the tileset's own bounding volume: catalogue bboxes are sometimes wrong.
     tiles.registerPlugin(new ReorientationPlugin({ recenter: true }));
     // Default screen-space error keeps the tile count (and download time) reasonable for large photorealistic layers.
-    tiles.errorTarget = 16;
+    tiles.errorTarget = 12;
     // Photorealistic textures fill the default 0.4 GB cache quickly; a full cache refuses new tiles and loading stalls.
     tiles.lruCache.minBytesSize = 0.9 * 2 ** 30;
     tiles.lruCache.maxBytesSize = 1.2 * 2 ** 30;
@@ -374,7 +397,8 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     const styleOf = (o: TileOverlay) => {
       const token = STATUS_TOKEN[o.status], reference = o.status.startsWith('reference');
       return {
-        fillStyle: css(token, o.selected ? 0.45 : o.hovered ? 0.4 : reference ? 0.12 : 0.25),
+        // Outline-first: a light tint keeps the real imagery readable; selection/hover get a stronger fill.
+        fillStyle: css(token, o.selected ? 0.35 : o.hovered ? 0.25 : reference ? 0.04 : 0.08),
         strokeStyle: o.selected ? css('--selection') : o.hovered ? css('--hover-outline') : css(o.status === 'unapproved' ? '--unapproved-stroke' : token, reference ? 0.7 : 1),
         strokeWidth: o.selected ? 6 : o.hovered ? 4 : 2,
       };

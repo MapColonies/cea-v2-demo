@@ -123,7 +123,7 @@ export function SubtileApprovalFlow({
   const toggleReference = (id: string) => {
     setReferenceIds((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -145,6 +145,13 @@ export function SubtileApprovalFlow({
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model.id]);
+
+  // The shared catalogue may still be arriving when the workspace opens: load the grid once it exists.
+  const tilesAvailable = subtilesFor([model.id]).length > 0;
+  useEffect(() => {
+    if (tilesAvailable && subtiles.length === 0) loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tilesAvailable, model.id]);
 
   const effectiveApproved = (subtile: Subtile) =>
     !rejected && (pending[subtile.id] ?? subtile.is_approved_for_coordinates);
@@ -194,7 +201,7 @@ export function SubtileApprovalFlow({
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };

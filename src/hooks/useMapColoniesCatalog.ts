@@ -5,16 +5,20 @@ import type { Mc3DRecord } from '@/lib/mapcolonies/csw';
 type Catalog = { records: Mc3DRecord[]; matched: number };
 // One catalogue request shared by every screen; reload() forces a fresh read.
 let cached: Promise<Catalog> | null = null;
+// The last resolved catalogue, so components mounted later render it immediately (no empty first render).
+let resolved: Catalog | null = null;
 const load = (force = false) => {
-  if (!cached || force) cached = loadMapColoniesCatalog().catch(e => { cached = null; throw e; });
+  if (!cached || force) cached = loadMapColoniesCatalog().then(c => (resolved = c)).catch(e => { cached = null; throw e; });
   return cached;
 };
 
 export function useMapColoniesCatalog() {
-  const [state, setState] = useState<{ records: Mc3DRecord[]; matched: number; loading: boolean; error: string }>({ records: [], matched: 0, loading: true, error: '' });
+  const [state, setState] = useState<{ records: Mc3DRecord[]; matched: number; loading: boolean; error: string }>(() =>
+    resolved ? { ...resolved, loading: false, error: '' } : { records: [], matched: 0, loading: true, error: '' });
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let live = true;
+    if (revision === 0 && resolved) return () => { live = false; };
     setState(s => ({ ...s, loading: true, error: '' }));
     load(revision > 0)
       .then(c => { if (live) setState({ records: c.records, matched: c.matched, loading: false, error: '' }); })
@@ -24,3 +28,6 @@ export function useMapColoniesCatalog() {
   const reload = useCallback(() => setRevision(v => v + 1), []);
   return { ...state, reload };
 }
+
+/** Test helper: forget the shared catalogue. */
+export const resetMapColoniesCatalogCache = () => { cached = null; resolved = null; };

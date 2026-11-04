@@ -4,6 +4,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 import { TilesRenderer, EnvironmentControls } from '3d-tiles-renderer/three';
+import { LRUCache, PriorityQueue, DownloadPriorityQueue, DEFAULT_LRU_CACHE, DEFAULT_DOWNLOAD_QUEUE, DEFAULT_PARSE_QUEUE, DEFAULT_NODE_QUEUE } from '3d-tiles-renderer/core';
 import { GLTFExtensionsPlugin, ReorientationPlugin } from '3d-tiles-renderer/three/plugins';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
@@ -112,9 +113,23 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     tiles.registerPlugin(new ReorientationPlugin({ recenter: true }));
     // Default screen-space error keeps the tile count (and download time) reasonable for large photorealistic layers.
     tiles.errorTarget = 16;
-    // Photorealistic textures fill the default 0.4 GB cache quickly; a full cache refuses new tiles and loading stalls.
-    tiles.lruCache.minBytesSize = 0.9 * 2 ** 30;
-    tiles.lruCache.maxBytesSize = 1.2 * 2 ** 30;
+    // Each view gets its OWN cache and queues. The library defaults are module-wide singletons shared by every
+    // TilesRenderer: after one view filled the shared cache / download slots, every later 3D view stayed black
+    // "loading" forever. Photorealistic textures also need more than the default 0.4 GB before tiles are refused.
+    const lruCache = new LRUCache();
+    lruCache.unloadPriorityCallback = DEFAULT_LRU_CACHE.unloadPriorityCallback;
+    lruCache.minBytesSize = 0.9 * 2 ** 30;
+    lruCache.maxBytesSize = 1.2 * 2 ** 30;
+    const downloadQueue = new DownloadPriorityQueue();
+    downloadQueue.maxJobsPerOrigin = 25;
+    downloadQueue.priorityCallback = DEFAULT_DOWNLOAD_QUEUE.priorityCallback;
+    const parseQueue = new PriorityQueue();
+    parseQueue.maxJobs = 5;
+    parseQueue.priorityCallback = DEFAULT_PARSE_QUEUE.priorityCallback;
+    const processNodeQueue = new PriorityQueue();
+    processNodeQueue.maxJobs = 25;
+    processNodeQueue.priorityCallback = DEFAULT_NODE_QUEUE.priorityCallback;
+    Object.assign(tiles, { lruCache, downloadQueue, parseQueue, processNodeQueue });
     tiles.setCamera(camera);
     scene.add(tiles.group);
 
@@ -506,6 +521,8 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       draco.dispose();
       ktx2.dispose();
       renderer.dispose();
+      // Free the GPU context right away: browsers cap live WebGL contexts and later views would fail to get one.
+      renderer.forceContextLoss();
       renderer.domElement.remove();
     };
   }, [tilesetUrl, bbox, focus]);

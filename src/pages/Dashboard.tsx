@@ -11,7 +11,7 @@ import { SubtileApprovalFlow, type ApprovalSession } from '@/components/models/S
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LogOut, Box, User, ArrowRight, FileSpreadsheet, Globe2 } from 'lucide-react';
+import { LogOut, User, ArrowRight, FileSpreadsheet, Globe2 } from 'lucide-react';
 import { MapColoniesCatalog } from '@/components/mapcolonies/MapColoniesCatalog';
 import { exportTestPlanToExcel } from '@/lib/exportTestPlan';
 import type { Database } from '@/integrations/supabase/types';
@@ -47,9 +47,7 @@ export function Dashboard() {
                 <ArrowRight className="w-5 h-5" />
               </Button>
             ) : (
-              <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-                <Box className="w-5 h-5 text-primary-foreground" />
-              </div>
+              <img src="/favicon.svg" alt="" className="w-10 h-10 shrink-0 rounded-lg" />
             )}
             <div className="min-w-0">
               <h1 className="truncate text-lg font-semibold">מנגנון אישור מודל לחילוץ נ.צ. — גרסה 2</h1>

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a2a46"/>
+      <stop offset="1" stop-color="#0a1020"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#45e0b0"/>
+      <stop offset="1" stop-color="#18a8c9"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <!-- photorealistic terrain block -->
+  <path d="M7 33 L32 47 L32 57 L7 43 Z" fill="#0f7f9c"/>
+  <path d="M57 33 L32 47 L32 57 L57 43 Z" fill="#0a5468"/>
+  <path d="M32 19 L57 33 L32 47 L7 33 Z" fill="url(#top)"/>
+  <!-- 2x2 sub-tile grid, one approved cell -->
+  <path d="M32 33 L44.5 26 L57 33 L44.5 40 Z" fill="#ffffff" fill-opacity=".92"/>
+  <g stroke="#0a1020" stroke-opacity=".6" stroke-width="2.4" stroke-linecap="round">
+    <path d="M19.5 26 L44.5 40"/>
+    <path d="M44.5 26 L19.5 40"/>
+  </g>
+  <!-- location pin -->
+  <path d="M32 3c-5 0-9 3.8-9 8.8C23 18 32 26 32 26s9-8 9-14.2C41 6.8 37 3 32 3z" fill="#f8fafc"/>
+  <circle cx="32" cy="11.8" r="3.4" fill="#0a1020"/>
+</svg>

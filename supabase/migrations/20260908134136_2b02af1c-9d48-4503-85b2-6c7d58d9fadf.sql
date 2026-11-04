@@ -1,0 +1,1 @@
+ALTER FUNCTION public.save_subtile_approval_changes(uuid, jsonb, text, text) SECURITY INVOKER;

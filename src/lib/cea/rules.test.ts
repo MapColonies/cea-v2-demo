@@ -1,0 +1,27 @@
+import {describe,it,expect} from 'vitest';
+import {APPROVAL_IDLE_MS,APPROVAL_HARD_MS,EDIT_IDLE_MS,sessionValid,catalogProtected,withinRadius,statusOf,accuracyInRange,tileIdentifier,convertCoordinate,projectedCoordinate,type Model,type Subtile} from './rules';
+import { approvalStatusChanges } from './rules';
+const model={id:'model',center_lat:32,center_lng:35,bbox_north:33,bbox_south:31,bbox_east:36,bbox_west:34} as Model;
+describe('CEA business rules',()=>{
+ it('fully approved stages approval for every subtile',()=>expect(approvalStatusChanges([{id:'a'},{id:'b'}],'approved',new Set())).toEqual({a:true,b:true}));
+ it('unapproved stages cancellation for every subtile',()=>expect(approvalStatusChanges([{id:'a'},{id:'b'}],'not_approved',new Set(['a']))).toEqual({a:false,b:false}));
+ it('partial approves only the chosen proper subset',()=>expect(approvalStatusChanges([{id:'a'},{id:'b'}],'partial',new Set(['b']))).toEqual({a:false,b:true}));
+ it('partial rejects empty or all-selected choices',()=>{expect(()=>approvalStatusChanges([{id:'a'},{id:'b'}],'partial',new Set())).toThrow();expect(()=>approvalStatusChanges([{id:'a'},{id:'b'}],'partial',new Set(['a','b']))).toThrow();});
+ it('uses persistent eight-digit identifier instead of per-model code',()=>expect(tileIdentifier({display_id:'00000134',code:'A1'} as Subtile)).toBe('00000134'));
+ it('rejected overrides any previous approval count',()=>expect(statusOf({...model,is_rejected:true},{model:{total:12,approved:12}})).toBe('rejected'));
+ it('restored model with cancelled approvals is unapproved',()=>expect(statusOf({...model,is_rejected:false},{model:{total:12,approved:0}})).toBe('not_approved'));
+ it('accuracy from/to includes both boundaries and excludes outside',()=>{expect(accuracyInRange(1,'1','3')).toBe(true);expect(accuracyInRange(3,'1','3')).toBe(true);expect(accuracyInRange(.9,'1','3')).toBe(false);expect(accuracyInRange(3.1,'1','3')).toBe(false);expect(accuracyInRange(null,'1','3')).toBe(false);expect(accuracyInRange(2,'3','1')).toBe(false);});
+ it('UTM zone 36 converts equatorial central meridian',()=>{const p=convertCoordinate('utm',500000,0,36,true);expect(p.lng).toBeCloseTo(33,5);expect(p.lat).toBeCloseTo(0,5);});
+ it('4 of 12 is partial',()=>expect(statusOf(model,{model:{total:12,approved:4}})).toBe('partial'));
+ it('12 of 12 is fully approved',()=>expect(statusOf(model,{model:{total:12,approved:12}})).toBe('approved'));
+ it('zero is unapproved',()=>expect(statusOf(model,{model:{total:12,approved:0}})).toBe('not_approved'));
+ it('30 minute idle timeout',()=>{expect(APPROVAL_IDLE_MS).toBe(1800000);expect(sessionValid(0,0,1799999)).toBe(true);expect(sessionValid(0,0,1800000)).toBe(false);});
+ it('12 hour hard limit',()=>{expect(APPROVAL_HARD_MS).toBe(43200000);expect(sessionValid(0,43199999,43200000)).toBe(false);});
+ it('10 minute edit expiry',()=>expect(EDIT_IDLE_MS).toBe(600000));
+ it('one approved tile blocks deletion and unpublish',()=>expect(catalogProtected(1)).toBe(true));
+ it('zero releases catalog protection',()=>expect(catalogProtected(0)).toBe(false));
+ it('radius uses centers not bbox',()=>{expect(withinRadius(model,32,35,0)).toBe(true);expect(withinRadius(model,32.1,35,10)).toBe(false);expect(withinRadius(model,32.1,35,12)).toBe(true);});
+ it('WGS84 x is longitude',()=>expect(convertCoordinate('wgs84',35,32)).toEqual({lat:32,lng:35}));
+ it('Israel Grid round trip',()=>{const p=projectedCoordinate(32,35),q=convertCoordinate('itm',p.x,p.y);expect(q.lat).toBeCloseTo(32,5);expect(q.lng).toBeCloseTo(35,5);});
+ it('UTM validates zone',()=>expect(()=>convertCoordinate('utm',500000,3500000,0)).toThrow());
+});

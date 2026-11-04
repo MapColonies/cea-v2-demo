@@ -1,0 +1,26 @@
+# Project architecture
+- Resolve UI permissions from all protected user_roles rows, prioritizing admin over viewer; an account can legitimately hold both roles and server-side checks remain authoritative.
+- The routed Dashboard owns shared catalog selection; ModelsList is the single catalog implementation to keep filters and counters consistent.
+- Catalog eye previews render inline using the read-only synthetic renderer and a 2D/3D switch without unmounting the catalog, preserving filter state and the existing confirmation flow.
+- Catalog metadata visibility and collapse state are independent of model selection, so hiding details preserves the map and confirmation target; the shared coordinate tool accepts an optional inline field to avoid duplicate catalog inputs.
+- Pending approval deltas are independent of filtered tile results; the side list shows the complete staged set and undo removes only the chosen delta.
+- Shared bounding-box intersection determines eligible touching reference models; both renderers show all their read-only subtiles using muted status colors and dashed borders.
+- CEA geospatial conversions and timing constants live in src/lib/cea with concrete rule tests to prevent divergent business rules.
+- Map/list selection, hover and visible-tile state are owned by the approval panel; shared spatial visibility helpers keep 2D and synthetic 3D behavior consistent.
+- The approval workspace uses the shared resizable panels; map framing runs on entry/navigation, never from selection state, to preserve camera stability.
+- Vite must deduplicate React/React DOM and prebundle the resizable workspace dependency at startup to avoid mixed React instances after live updates.
+- Leaflet renders the 2D reference map and Three.js renders explicitly synthetic demo surfaces; no demo elevation is an operational measurement.
+- Approval sessions are verified by an authenticated edge function using password verification for every authentication provider, and bound to the original auth session; the UI always collects fresh approver details before saving, while server RPCs enforce admin roles, time limits and edit-lock ownership.
+- Approval deltas and audit logs commit together through the protected save RPC; direct client approval writes are denied to prevent bypasses.
+- Bulk approval controls acquire the protected model edit lock on demand before staging changes, so selecting polygons does not require a separate edit-mode action.
+- Catalog deletion/unpublish and immutable geometry protections are database triggers so every write path respects them.
+- Model rejection and restoration use the verified workspace RPC and database triggers; rejection revokes all subtiles atomically and records append-only audit history so no write path can retain usable approvals.
+- Model status choices stage complete subtile deltas through the shared CEA rules and existing protected workspace RPC; partial status requires an explicit proper subset of selected subtiles, never an arbitrary automatic approval.
+- Successful workspace saves enter a non-editable confirmation state before a cleanup-safe timed return; Dashboard clears approval-session and reference state on return while retaining the signed-in account.
+- Subtile display identifiers are database-generated globally unique eight-digit strings, immutable after creation; UUIDs remain internal keys.
+- Local reference shapefiles are parsed and validated client-side with shpjs and never written into operational geometry; both renderers display the same read-only WGS84 reference data.
+- Shared BasemapLayers provides Leaflet background switching for both catalog and approval maps; imagery is a 2D background, never a 3D surface.
+- Status renaming is presentation-only; retain existing persisted state keys and protected rejection semantics to preserve audit history and permissions.
+- MapColonies integration targets a VPN-reachable organizational HTTPS gateway called by the browser, not a local desktop bridge; provider credentials stay on that gateway, catalogue and tile dependencies use constrained authenticated paths, and real 3D remains unverified until network access is available.
+- The approval flow owns local reference data and passes it to SubtileMap, allowing upload controls outside the map while keeping 2D and 3D overlays synchronized.
+- MapColonies 3D catalogue (CSW 2.0.2, outputSchema http://schema.mapcolonies.com/3d) is parsed in src/lib/mapcolonies/csw.ts; records with an mc:links scheme="3DTiles" tileset.json are rendered as real photorealistic 3D Tiles by Tiles3DView (Three.js + 3d-tiles-renderer, lazy-loaded). The token is attached only to *.mapcolonies.net URLs (catalogue, tileset and every child tile). With VITE_MAPCOLONIES_TOKEN set the browser calls the catalogue directly over VPN; without it the existing mapcolonies-catalog edge function is used.

@@ -12,7 +12,7 @@ const record = {
   tilesetUrl: 'https://tiles.mapcolonies.net/api/3d/v1/b3dm/x/tileset.json', links: [],
 } as unknown as Mc3DRecord;
 
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'admin-1' }, signOut: vi.fn(), isAdmin: true, userRole: 'admin', username: 'dana' }) }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'viewer-1' }, signOut: vi.fn(), isAdmin: false, userRole: 'viewer', username: 'dana' }) }));
 vi.mock('@/lib/exportTestPlan', () => ({ exportTestPlanToExcel: vi.fn() }));
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => false }));
 vi.mock('@/lib/mapcolonies/client', () => ({ mapColoniesConfig: { token: 'T' }, tokenizedUrl: (u: string) => u, loadMapColoniesCatalog: async () => ({ matched: 1, records: [record] }) }));

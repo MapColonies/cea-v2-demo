@@ -115,10 +115,12 @@ describe('selected polygon approval', () => {
     await waitFor(() => expect(mocks.acquire).toHaveBeenCalledOnce());
     expect(screen.getAllByText('אין שינויים ממתינים').length).toBeGreaterThan(0);
   });
-  it('keeps viewer accounts unable to approve selected polygons', async () => {
+  it('lets any signed-in account approve selected polygons in demo mode', async () => {
     mocks.admin = false;
+    mocks.acquire.mockResolvedValue(true);
     await selectTile();
-    expect(screen.getByRole('button', { name: /^אשר נבחרים$/ })).toBeDisabled();
-    expect(mocks.acquire).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^אשר נבחרים$/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /^אשר נבחרים$/ }));
+    await waitFor(() => expect(screen.getByText('1 שינויים ממתינים לשמירה')).toBeInTheDocument());
   });
 });

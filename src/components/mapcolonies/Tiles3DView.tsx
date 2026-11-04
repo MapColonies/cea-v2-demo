@@ -4,8 +4,10 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 import { TilesRenderer, EnvironmentControls } from '3d-tiles-renderer/three';
-import { GLTFExtensionsPlugin, ReorientationPlugin, ImageOverlayPlugin, GeoJSONOverlay } from '3d-tiles-renderer/three/plugins';
-import type { Feature, FeatureCollection, Polygon } from 'geojson';
+import { GLTFExtensionsPlugin, ReorientationPlugin } from '3d-tiles-renderer/three/plugins';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Home, Minus, Plus, RotateCcw, RotateCw, ChevronsUp, ChevronsDown, HelpCircle } from 'lucide-react';
 import { projectedCoordinate } from '@/lib/cea/rules';
 import { tokenizedUrl } from '@/lib/mapcolonies/client';
@@ -50,7 +52,7 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
   const host = useRef<HTMLDivElement>(null);
   const nav = useRef<Nav | null>(null);
   // Overlay plugin is attached lazily, only when there are sub-tiles to drape (it is costly for big photorealistic tilesets).
-  const ctx = useRef<{ tiles: TilesRenderer; renderer: THREE.WebGLRenderer; plugin: ImageOverlayPlugin | null; overlay: GeoJSONOverlay | null; retry: () => void } | null>(null);
+  const ctx = useRef<{ setOverlays: (list: TileOverlay[]) => void; retry: () => void } | null>(null);
   const callbacks = useRef({ onPickPoint, onHoverPoint });
   callbacks.current = { onPickPoint, onHoverPoint };
   const [readout, setReadout] = useState(EMPTY_READOUT);
@@ -87,33 +89,21 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     const draco = new DRACOLoader(); // decoders bundled by three via import.meta.url
     const ktx2 = new KTX2Loader().detectSupport(renderer);
     tiles.registerPlugin(new GLTFExtensionsPlugin({ rtc: true, dracoLoader: draco, ktxLoader: ktx2 }));
-    // Photorealistic meshes carry baked-in lighting: render textured materials unlit (as Cesium does) and sharpen
-    // oblique views with anisotropic filtering. Registered before the overlay plugin so its wrapping still applies.
+    // Tile materials are left exactly as authored (lit); only sharpen oblique views with anisotropic filtering.
     const anisotropy = renderer.capabilities.getMaxAnisotropy();
     tiles.registerPlugin({
-      name: 'PHOTOREALISTIC_MATERIALS',
-      priority: -20, // before ImageOverlayPlugin (-15), which wraps the final materials
+      name: 'ANISOTROPY',
       processTileModel: (model: THREE.Object3D) => {
         model.traverse(o => {
-          const mesh = o as THREE.Mesh;
-          if (!mesh.isMesh) return;
-          const swap = (m: THREE.Material) => {
-            const src = m as THREE.MeshStandardMaterial;
-            if (!src.map || src.type === 'MeshBasicMaterial') return m;
-            src.map.anisotropy = anisotropy;
-            const basic = new THREE.MeshBasicMaterial({ map: src.map, color: src.color, vertexColors: src.vertexColors, side: src.side, transparent: src.transparent, opacity: src.opacity, alphaTest: src.alphaTest });
-            basic.defines = {};
-            src.dispose();
-            return basic;
-          };
-          mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
+          const mats = (o as THREE.Mesh).isMesh ? [(o as THREE.Mesh).material].flat() : [];
+          for (const m of mats) { const map = (m as THREE.MeshStandardMaterial).map; if (map) map.anisotropy = anisotropy; }
         });
       },
     });
     // Orient from the tileset's own bounding volume: catalogue bboxes are sometimes wrong.
     tiles.registerPlugin(new ReorientationPlugin({ recenter: true }));
     // Default screen-space error keeps the tile count (and download time) reasonable for large photorealistic layers.
-    tiles.errorTarget = 12;
+    tiles.errorTarget = 16;
     // Photorealistic textures fill the default 0.4 GB cache quickly; a full cache refuses new tiles and loading stalls.
     tiles.lruCache.minBytesSize = 0.9 * 2 ** 30;
     tiles.lruCache.maxBytesSize = 1.2 * 2 ** 30;
@@ -324,11 +314,115 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       home: () => { controls.resetState(); settle = null; if (homeView) look(homeView.center, homeView.distance); else frame(); },
     };
 
-    ctx.current = { tiles, renderer, plugin: null, overlay: null, retry: () => { setTileErrors({ count: 0, last: '' }); setEmpty(false); tiles.resetFailedTiles(); } };
+    const tilesLoading = () => { const st = (tiles as unknown as { stats: { queued: number; downloading: number; parsing: number } }).stats; return st.queued + st.downloading + st.parsing; };
+    // --- sub-tile overlay: outlines draped on the real surface as separate lines (tile materials untouched) ---
+    const overlayGroup = new THREE.Group();
+    overlayGroup.raycast = () => {}; // never intercept picking / camera pivots
+    scene.add(overlayGroup);
+    const lineResolution = new THREE.Vector2(1, 1);
+    const color = (name: string) => new THREE.Color().setStyle(token(name));
+    type Item = { overlay: TileOverlay; line: Line2; material: LineMaterial; fill: THREE.Mesh | null; fillReady: boolean };
+    const items = new Map<string, Item>();
+    let overlayGeometryKey = '', topHeight = 0, drapeDirty = false, lastDrape = 0;
+    const surfaceRay = new THREE.Raycaster(); surfaceRay.firstHitOnly = true;
+    const surfacePoint = (lat: number, lng: number, lift: number) => {
+      const up = tiles.ellipsoid.getCartographicToNormal(lat * D2R, lng * D2R, new THREE.Vector3()).transformDirection(tiles.group.matrixWorld);
+      const from = tiles.ellipsoid.getCartographicToPosition(lat * D2R, lng * D2R, topHeight + 500, new THREE.Vector3()).applyMatrix4(tiles.group.matrixWorld);
+      surfaceRay.set(from, up.clone().negate());
+      const hit = surfaceRay.intersectObject(tiles.group, true)[0];
+      return hit ? hit.point.addScaledVector(up, lift) : null;
+    };
+    const ring = (b: McBBox, n = 12) => {
+      const c: [number, number][] = [[b.south, b.west], [b.south, b.east], [b.north, b.east], [b.north, b.west], [b.south, b.west]];
+      const pts: [number, number][] = [];
+      for (let e = 0; e < 4; e++) for (let i = 0; i < n; i++) { const t = i / n; pts.push([c[e][0] + (c[e + 1][0] - c[e][0]) * t, c[e][1] + (c[e + 1][1] - c[e][1]) * t]); }
+      pts.push(c[4]);
+      return pts;
+    };
+    const drapeLine = (item: Item) => {
+      const pts = ring(item.overlay.bbox).map(([lat, lng]) => surfacePoint(lat, lng, 2));
+      const ok = pts.filter((p): p is THREE.Vector3 => p !== null);
+      if (ok.length < 2) { item.line.visible = false; return; }
+      const geometry = new LineGeometry();
+      geometry.setPositions(ok.flatMap(p => [p.x, p.y, p.z]));
+      item.line.geometry.dispose();
+      item.line.geometry = geometry;
+      item.line.computeLineDistances();
+      item.line.visible = true;
+    };
+    const drapeFill = (item: Item) => {
+      const { west, south, east, north } = item.overlay.bbox, n = 8, positions: number[] = [], index: number[] = [];
+      for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+        const p = surfacePoint(south + (north - south) * j / n, west + (east - west) * i / n, 1.5);
+        if (!p) return;
+        positions.push(p.x, p.y, p.z);
+      }
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1; index.push(a, b, c, b, d, c); }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(index);
+      if (!item.fill) {
+        item.fill = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4 }));
+        item.fill.raycast = () => {};
+        overlayGroup.add(item.fill);
+      } else { item.fill.geometry.dispose(); item.fill.geometry = geometry; }
+      item.fillReady = true;
+    };
+    const restyle = () => {
+      for (const item of items.values()) {
+        const o = item.overlay, reference = o.status.startsWith('reference');
+        const base = STATUS_TOKEN[o.status];
+        item.material.color.copy(color(o.selected ? '--selection' : o.hovered ? '--hover-outline' : o.status === 'unapproved' ? '--unapproved-stroke' : base));
+        item.material.linewidth = o.selected ? 5 : o.hovered ? 4 : reference ? 1.5 : 2.5;
+        item.material.dashed = reference;
+        item.material.opacity = reference ? 0.7 : 1;
+        item.line.renderOrder = o.selected ? 3 : o.hovered ? 2 : 1;
+        const showFill = Boolean(o.selected || o.hovered);
+        if (showFill && !item.fillReady && tiles.root) drapeFill(item);
+        if (item.fill) {
+          item.fill.visible = showFill;
+          (item.fill.material as THREE.MeshBasicMaterial).color.copy(color(o.selected ? '--selection' : base));
+        }
+      }
+    };
+    const drapeAll = () => {
+      if (!tiles.root) return;
+      for (const item of items.values()) { drapeLine(item); item.fillReady = false; }
+      restyle();
+      lastDrape = performance.now();
+      drapeDirty = false;
+    };
+    const setOverlays = (list: TileOverlay[]) => {
+      const key = list.map(o => `${o.id}@${o.bbox.west},${o.bbox.south},${o.bbox.east},${o.bbox.north}`).join('|');
+      if (key !== overlayGeometryKey) {
+        overlayGeometryKey = key;
+        for (const item of items.values()) { overlayGroup.remove(item.line); item.line.geometry.dispose(); item.material.dispose(); if (item.fill) { overlayGroup.remove(item.fill); item.fill.geometry.dispose(); (item.fill.material as THREE.Material).dispose(); } }
+        items.clear();
+        for (const o of list) {
+          const material = new LineMaterial({ linewidth: 2.5, transparent: true, dashSize: 6, gapSize: 4, worldUnits: false });
+          material.resolution.copy(lineResolution);
+          const line = new Line2(new LineGeometry(), material);
+          line.visible = false; line.raycast = () => {};
+          overlayGroup.add(line);
+          items.set(o.id, { overlay: o, line, material, fill: null, fillReady: false });
+        }
+        drapeDirty = true;
+      } else {
+        for (const o of list) { const item = items.get(o.id); if (item) item.overlay = o; }
+      }
+      restyle();
+    };
+    tiles.addEventListener('load-root-tileset', () => { topHeight = Math.max(tilesetExtent()?.top ?? 0, 0); drapeDirty = true; });
+    const onLoadEnd = () => { drapeDirty = true; };
+    tiles.addEventListener('tiles-load-end', onLoadEnd);
+    ctx.current = { setOverlays, retry: () => { setTileErrors({ count: 0, last: '' }); setEmpty(false); tiles.resetFailedTiles(); } };
+    setSceneRevision(v => v + 1);
 
     const resize = new ResizeObserver(() => {
       const w = el.clientWidth, h = el.clientHeight; if (!w || !h) return;
       renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+      lineResolution.set(w, h);
+      for (const item of items.values()) item.material.resolution.set(w, h);
       tiles.setResolutionFromRenderer(camera, renderer);
     });
     resize.observe(el);
@@ -336,6 +430,11 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     let raf = 0, lastProgress = -1, statsFrame = 0;
     const animate = () => {
       settleOnSurface();
+      // Re-drape outlines as finer tiles arrive (throttled), so they hug the real surface.
+      if (items.size && tiles.root) {
+        const now = performance.now();
+        if (drapeDirty ? now - lastDrape > 400 : (now - lastDrape > 2000 && tilesLoading() > 0)) drapeAll();
+      }
       controls.update();
       camera.updateMatrixWorld();
       tiles.update();
@@ -357,6 +456,9 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       resize.disconnect();
       nav.current = null;
       ctx.current = null;
+      tiles.removeEventListener('tiles-load-end', onLoadEnd);
+      for (const item of items.values()) { item.line.geometry.dispose(); item.material.dispose(); if (item.fill) { item.fill.geometry.dispose(); (item.fill.material as THREE.Material).dispose(); } }
+      items.clear();
       bvhQueue.length = 0;
       renderer.domElement.removeEventListener('pointermove', move);
       renderer.domElement.removeEventListener('pointerleave', leave);
@@ -378,54 +480,14 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     };
   }, [tilesetUrl, bbox, focus]);
 
-  // Keep the draped sub-tiles in sync with status / selection without reloading the tileset.
+  // Keep the draped sub-tile outlines in sync with status / selection without reloading the tileset.
   const list = overlays ?? [];
-  const styleKey = list.map(o => `${o.id}:${o.status}:${o.selected ? 1 : 0}:${o.hovered ? 1 : 0}`).join('|');
-  const geometryKey = list.map(o => `${o.id}@${o.bbox.west},${o.bbox.south},${o.bbox.east},${o.bbox.north}`).join('|');
-  const lastGeometry = useRef('');
+  const styleKey = list.map(o => `${o.id}@${o.bbox.west},${o.bbox.south},${o.bbox.east},${o.bbox.north}:${o.status}:${o.selected ? 1 : 0}:${o.hovered ? 1 : 0}`).join('|');
   useEffect(() => {
-    const c = ctx.current; if (!c) return;
-    if (!list.length && !c.plugin) return;
-    if (!c.plugin) {
-      c.plugin = new ImageOverlayPlugin({ overlays: [], renderer: c.renderer, resolution: 512, enableTileSplitting: false });
-      c.tiles.registerPlugin(c.plugin);
-    }
-    const css = (name: string, alpha = 1) => {
-      const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/\s+/g, ', ');
-      return v ? `hsla(${v}, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
-    };
-    const styleOf = (o: TileOverlay) => {
-      const token = STATUS_TOKEN[o.status], reference = o.status.startsWith('reference');
-      return {
-        // Outline-first: a light tint keeps the real imagery readable; selection/hover get a stronger fill.
-        fillStyle: css(token, o.selected ? 0.35 : o.hovered ? 0.25 : reference ? 0.04 : 0.08),
-        strokeStyle: o.selected ? css('--selection') : o.hovered ? css('--hover-outline') : css(o.status === 'unapproved' ? '--unapproved-stroke' : token, reference ? 0.7 : 1),
-        strokeWidth: o.selected ? 6 : o.hovered ? 4 : 2,
-      };
-    };
-    const geometryChanged = !c.overlay || lastGeometry.current !== `${sceneRevision}#${geometryKey}`;
-    if (geometryChanged) {
-      // New sub-tile set (or new scene): rebuild the overlay so its spatial index matches.
-      lastGeometry.current = `${sceneRevision}#${geometryKey}`;
-      if (c.overlay) { c.plugin.deleteOverlay(c.overlay); c.overlay = null; }
-      if (!list.length) return;
-      const features: Feature<Polygon>[] = list.map(o => {
-        const { west, south, east, north } = o.bbox;
-        return { type: 'Feature', id: o.id, properties: styleOf(o), geometry: { type: 'Polygon', coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] } };
-      });
-      c.overlay = new GeoJSONOverlay({ geojson: { type: 'FeatureCollection', features } as FeatureCollection, resolution: 512 });
-      c.plugin.addOverlay(c.overlay);
-      return;
-    }
-    // Same geometry: restyle in place and redraw the already generated textures.
-    const byId = new Map(list.map(o => [o.id, o]));
-    for (const f of ((c.overlay as unknown as { geojson: FeatureCollection<Polygon> }).geojson).features) {
-      const o = byId.get(String(f.id)); if (o) Object.assign(f.properties as object, styleOf(o));
-    }
-    (c.overlay as unknown as { redraw: () => void }).redraw();
-    // styleKey/geometryKey capture every input from `list`.
+    ctx.current?.setOverlays(list);
+    // styleKey captures every input from `list`; sceneRevision re-applies after a new scene is created.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [styleKey, geometryKey, sceneRevision]);
+  }, [styleKey, sceneRevision]);
 
   const btn = 'h-8 w-8 flex items-center justify-center rounded hover:bg-accent text-popover-foreground';
   const go = (fn: (n: Nav) => void) => () => { if (nav.current) fn(nav.current); };

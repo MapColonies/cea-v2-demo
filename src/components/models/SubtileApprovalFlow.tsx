@@ -69,7 +69,9 @@ export function SubtileApprovalFlow({
   allModels = [],
   initialReferenceIds = new Set(),
 }: Props) {
-  const { user, isAdmin } = useAuth();
+  const { user } = useAuth();
+  // Demo mode: every signed-in user may approve (approvals are browser-local and have no operational effect).
+  const isAdmin = Boolean(user);
   // Demo mode: real MapColonies models, approvals stay in this browser and have no operational effect.
   const access = useDemoApprovalAccess(model.id);
   const { subtilesFor } = useRealModels();

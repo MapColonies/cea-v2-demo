@@ -49,7 +49,8 @@ const STATUS_TOKEN: Record<OverlayStatus, string> = {
 export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPoint, onHoverPoint }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const nav = useRef<Nav | null>(null);
-  const overlayRef = useRef<{ overlay: GeoJSONOverlay; plugin: ImageOverlayPlugin } | null>(null);
+  // Overlay plugin is attached lazily, only when there are sub-tiles to drape (it is costly for big photorealistic tilesets).
+  const ctx = useRef<{ tiles: TilesRenderer; renderer: THREE.WebGLRenderer; plugin: ImageOverlayPlugin | null; overlay: GeoJSONOverlay | null; retry: () => void } | null>(null);
   const callbacks = useRef({ onPickPoint, onHoverPoint });
   callbacks.current = { onPickPoint, onHoverPoint };
   const [readout, setReadout] = useState(EMPTY_READOUT);
@@ -58,13 +59,14 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
   const [error, setError] = useState('');
   const [tileErrors, setTileErrors] = useState<{ count: number; last: string }>({ count: 0, last: '' });
   const [empty, setEmpty] = useState(false);
+  const [stats, setStats] = useState({ loaded: 0, loading: 0, refused: 0 });
   const [failure, setFailure] = useState(false);
   const [help, setHelp] = useState(false);
   const [sceneRevision, setSceneRevision] = useState(0);
 
   useEffect(() => {
     const el = host.current; if (!el) return;
-    setError(''); setProgress(0); setReadout(EMPTY_READOUT); setGeo(''); setTileErrors({ count: 0, last: '' }); setEmpty(false);
+    setError(''); setProgress(0); setReadout(EMPTY_READOUT); setGeo(''); setTileErrors({ count: 0, last: '' }); setEmpty(false); setStats({ loaded: 0, loading: 0, refused: 0 });
     let renderer: THREE.WebGLRenderer;
     try { renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true }); } catch { setFailure(true); return; }
     const token = (name: string) => `hsl(${getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/\s+/g, ', ')})`;
@@ -87,21 +89,43 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     tiles.registerPlugin(new GLTFExtensionsPlugin({ rtc: true, dracoLoader: draco, ktxLoader: ktx2 }));
     // Orient from the tileset's own bounding volume: catalogue bboxes are sometimes wrong.
     tiles.registerPlugin(new ReorientationPlugin({ recenter: true }));
-    const overlayPlugin = new ImageOverlayPlugin({ overlays: [], renderer, resolution: 512 });
-    tiles.registerPlugin(overlayPlugin);
-    tiles.errorTarget = 8;
+    // Default screen-space error keeps the tile count (and download time) reasonable for large photorealistic layers.
+    tiles.errorTarget = 16;
+    // Photorealistic textures fill the default 0.4 GB cache quickly; a full cache refuses new tiles and loading stalls.
+    tiles.lruCache.minBytesSize = 0.9 * 2 ** 30;
+    tiles.lruCache.maxBytesSize = 1.2 * 2 ** 30;
     tiles.setCamera(camera);
     scene.add(tiles.group);
 
     let models = 0;
+    // BVHs are built in idle time, never inside the tile load (a throw there would fail the tile).
+    const bvhQueue: THREE.Mesh[] = [];
+    let bvhScheduled = false;
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o: { timeout: number }) => number }).requestIdleCallback;
+    const idle = (cb: () => void) => (ric ? ric(cb, { timeout: 500 }) : window.setTimeout(cb, 50));
+    const buildBvh = () => {
+      bvhScheduled = false;
+      const start = performance.now();
+      while (bvhQueue.length && performance.now() - start < 12) {
+        const m = bvhQueue.shift()!;
+        try { const g = m.geometry; if (g?.attributes.position && !g.boundsTree && (g.index || g.attributes.position.count % 3 === 0)) g.computeBoundsTree(); } catch { /* fall back to plain raycast */ }
+      }
+      if (bvhQueue.length) { bvhScheduled = true; idle(buildBvh); }
+    };
     const onModel = ({ scene: model }: { scene: THREE.Object3D }) => {
       models++;
-      model.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh && m.geometry && !m.geometry.boundsTree) m.geometry.computeBoundsTree(); });
+      model.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh && m.geometry) bvhQueue.push(m); });
+      if (!bvhScheduled && bvhQueue.length) { bvhScheduled = true; idle(buildBvh); }
     };
     const onDisposeModel = ({ scene: model }: { scene: THREE.Object3D }) => model.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.geometry?.disposeBoundsTree?.(); });
     tiles.addEventListener('load-model', onModel);
     tiles.addEventListener('dispose-model', onDisposeModel);
 
+    // Ctrl + left drag rotates (EnvironmentControls natively uses Shift / right button): runs before the controls' handler.
+    const ctrlAsRotate = (e: PointerEvent) => { if (e.ctrlKey && e.button === 0) Object.defineProperty(e, 'shiftKey', { get: () => true }); };
+    const noMenu = (e: MouseEvent) => e.preventDefault();
+    renderer.domElement.addEventListener('pointerdown', ctrlAsRotate, { capture: true });
+    renderer.domElement.addEventListener('contextmenu', noMenu);
     const controls = new EnvironmentControls(scene, camera, renderer.domElement);
     controls.enableDamping = true;
     controls.enableFlight = true;
@@ -201,7 +225,10 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     };
     tiles.addEventListener('load-root-tileset', onRoot);
     tiles.addEventListener('load-error', onError);
-    const emptyTimer = window.setTimeout(() => { if (!models) setEmpty(true); }, 25000);
+    const emptyTimer = window.setTimeout(() => {
+      const st = (tiles as unknown as { stats: object }).stats as { queued: number; downloading: number; parsing: number };
+      if (!models && !(st.queued + st.downloading + st.parsing)) setEmpty(true);
+    }, 45000);
 
     // --- pointer: readout, hover, pick ----------------------------------------------------------------
     const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
@@ -274,8 +301,7 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       home: () => { controls.resetState(); settle = null; if (homeView) look(homeView.center, homeView.distance); else frame(); },
     };
 
-    overlayRef.current = { overlay: new GeoJSONOverlay({ geojson: { type: 'FeatureCollection', features: [] } }), plugin: overlayPlugin };
-    overlayPlugin.addOverlay(overlayRef.current.overlay);
+    ctx.current = { tiles, renderer, plugin: null, overlay: null, retry: () => { setTileErrors({ count: 0, last: '' }); setEmpty(false); tiles.resetFailedTiles(); } };
 
     const resize = new ResizeObserver(() => {
       const w = el.clientWidth, h = el.clientHeight; if (!w || !h) return;
@@ -284,7 +310,7 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     });
     resize.observe(el);
 
-    let raf = 0, lastProgress = -1;
+    let raf = 0, lastProgress = -1, statsFrame = 0;
     const animate = () => {
       settleOnSurface();
       controls.update();
@@ -292,6 +318,11 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       tiles.update();
       const p = Math.round(tiles.loadProgress * 100);
       if (p !== lastProgress) { lastProgress = p; setProgress(p); }
+      if (++statsFrame % 30 === 0) {
+        const st = (tiles as unknown as { stats: object }).stats as { queued: number; downloading: number; parsing: number; refused?: number };
+        const loading = st.queued + st.downloading + st.parsing, refused = st.refused ?? 0;
+        setStats(prev => prev.loaded === models && prev.loading === loading && prev.refused === refused ? prev : { loaded: models, loading, refused });
+      }
       renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
     };
@@ -302,11 +333,14 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       window.clearTimeout(emptyTimer);
       resize.disconnect();
       nav.current = null;
-      overlayRef.current = null;
+      ctx.current = null;
+      bvhQueue.length = 0;
       renderer.domElement.removeEventListener('pointermove', move);
       renderer.domElement.removeEventListener('pointerleave', leave);
       renderer.domElement.removeEventListener('pointerdown', pointerDown);
       renderer.domElement.removeEventListener('pointerup', pointerUp);
+      renderer.domElement.removeEventListener('pointerdown', ctrlAsRotate, { capture: true });
+      renderer.domElement.removeEventListener('contextmenu', noMenu);
       tiles.removeEventListener('load-root-tileset', onRoot);
       tiles.removeEventListener('load-error', onError);
       tiles.removeEventListener('load-model', onModel);
@@ -327,7 +361,12 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
   const geometryKey = list.map(o => `${o.id}@${o.bbox.west},${o.bbox.south},${o.bbox.east},${o.bbox.north}`).join('|');
   const lastGeometry = useRef('');
   useEffect(() => {
-    const ref = overlayRef.current; if (!ref) return;
+    const c = ctx.current; if (!c) return;
+    if (!list.length && !c.plugin) return;
+    if (!c.plugin) {
+      c.plugin = new ImageOverlayPlugin({ overlays: [], renderer: c.renderer, resolution: 512, enableTileSplitting: false });
+      c.tiles.registerPlugin(c.plugin);
+    }
     const css = (name: string, alpha = 1) => {
       const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/\s+/g, ', ');
       return v ? `hsla(${v}, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
@@ -340,26 +379,26 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
         strokeWidth: o.selected ? 6 : o.hovered ? 4 : 2,
       };
     };
-    const geometryChanged = lastGeometry.current !== `${sceneRevision}#${geometryKey}`;
+    const geometryChanged = !c.overlay || lastGeometry.current !== `${sceneRevision}#${geometryKey}`;
     if (geometryChanged) {
       // New sub-tile set (or new scene): rebuild the overlay so its spatial index matches.
       lastGeometry.current = `${sceneRevision}#${geometryKey}`;
+      if (c.overlay) { c.plugin.deleteOverlay(c.overlay); c.overlay = null; }
+      if (!list.length) return;
       const features: Feature<Polygon>[] = list.map(o => {
         const { west, south, east, north } = o.bbox;
         return { type: 'Feature', id: o.id, properties: styleOf(o), geometry: { type: 'Polygon', coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] } };
       });
-      ref.plugin.deleteOverlay(ref.overlay);
-      const next = new GeoJSONOverlay({ geojson: { type: 'FeatureCollection', features } as FeatureCollection, resolution: 512 });
-      ref.plugin.addOverlay(next);
-      overlayRef.current = { overlay: next, plugin: ref.plugin };
+      c.overlay = new GeoJSONOverlay({ geojson: { type: 'FeatureCollection', features } as FeatureCollection, resolution: 512 });
+      c.plugin.addOverlay(c.overlay);
       return;
     }
     // Same geometry: restyle in place and redraw the already generated textures.
     const byId = new Map(list.map(o => [o.id, o]));
-    for (const f of ((ref.overlay as unknown as { geojson: FeatureCollection<Polygon> }).geojson).features) {
+    for (const f of ((c.overlay as unknown as { geojson: FeatureCollection<Polygon> }).geojson).features) {
       const o = byId.get(String(f.id)); if (o) Object.assign(f.properties as object, styleOf(o));
     }
-    (ref.overlay as unknown as { redraw: () => void }).redraw();
+    (c.overlay as unknown as { redraw: () => void }).redraw();
     // styleKey/geometryKey capture every input from `list`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleKey, geometryKey, sceneRevision]);
@@ -390,15 +429,21 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     </div>
     {help && <div className="absolute top-12 right-14 z-[1001] w-64 space-y-1 rounded-md border bg-popover/95 p-2 text-xs text-popover-foreground shadow" dir="rtl">
       <p><b>גרירה עם כפתור שמאלי</b> — הזזת המודל</p>
-      <p><b>כפתור ימני / Shift + גרירה</b> — סיבוב והטיה</p>
+      <p><b>Ctrl + גרירה שמאלית</b> (או כפתור ימני / Shift) — סיבוב והטיה</p>
       <p><b>גלגלת</b> — זום לנקודת העכבר</p>
       <p><b>W A S D / חצים</b> — טיסה (לחצו קודם על המודל), Q/E — מטה/מעלה</p>
       <p><b>לחיצה</b> — בחירת תת־אריח</p>
     </div>}
 
-    {progress < 100 && !error && <div className="absolute bottom-16 left-2 rounded border bg-popover/95 px-2 py-1 text-xs text-popover-foreground" role="status">טוען אריחים… {progress}%</div>}
-    {tileErrors.count > 0 && !error && <div className="absolute bottom-24 left-2 max-w-sm rounded border border-destructive/50 bg-popover/95 px-2 py-1 text-xs text-destructive" role="status">{tileErrors.count} אריחים לא נטענו — {tileErrors.last}</div>}
-    {empty && !error && !tileErrors.count && <div className="absolute inset-x-0 top-1/3 mx-auto w-fit max-w-md rounded border bg-popover/95 p-3 text-center text-sm text-popover-foreground">ה־tileset נטען אך לא התקבלה גאומטריה — ייתכן שהמודל ריק או שהנתונים בקטלוג שגויים.</div>}
+    {(stats.loading > 0 || progress < 100) && !error && <div className="absolute bottom-16 left-2 rounded border bg-popover/95 px-2 py-1 text-xs text-popover-foreground" role="status" dir="rtl">
+      טוען אריחים… {stats.loaded} הוצגו · {stats.loading} בטעינה
+      {stats.refused > 0 && <span className="block text-muted-foreground">זיכרון האריחים מלא — אזורים רחוקים יוצגו ברזולוציה נמוכה</span>}
+    </div>}
+    {tileErrors.count > 0 && !error && <div className="absolute bottom-28 left-2 z-[1001] flex max-w-sm items-center gap-2 rounded border border-destructive/50 bg-popover/95 px-2 py-1 text-xs text-destructive" role="status" dir="rtl">
+      <span>{tileErrors.count} אריחים לא נטענו — {tileErrors.last}</span>
+      <button type="button" className="shrink-0 rounded border px-2 py-0.5 text-popover-foreground hover:bg-accent" onClick={() => ctx.current?.retry()}>נסה שוב</button>
+    </div>}
+    {empty && !error && !tileErrors.count && <div className="absolute inset-x-0 top-1/3 mx-auto w-fit max-w-md rounded border bg-popover/95 p-3 text-center text-sm text-popover-foreground">ה־tileset נטען אך שרת האריחים לא החזיר גאומטריה. בדקו בקונסול (F12) את שגיאות 3D Tiles ושלחו אותן.</div>}
     <div className="absolute bottom-2 left-2 rounded border bg-popover/95 p-2 text-xs font-mono text-popover-foreground" dir="ltr" data-testid="tiles-readout">
       {readout}
       <span className="block text-muted-foreground">{geo || 'WGS84 —'} · Israel Grid · גובה אליפסואידי</span>

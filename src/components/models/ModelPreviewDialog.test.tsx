@@ -6,6 +6,7 @@ import { ModelPreviewDialog } from './ModelPreviewDialog';
 const { realProps } = vi.hoisted(() => ({ realProps: vi.fn() }));
 vi.mock('@/components/mapcolonies/RealModel3DView', () => ({ RealModel3DView: (props: unknown) => { realProps(props); return null; } }));
 vi.mock('./ModelMetadata', () => ({ ModelMetadata: () => null }));
+vi.mock('@/hooks/useRealModels', () => ({ useRealModels: () => ({ subtilesFor: () => [{ id: 'm:A1', model_id: 'preview-model', bbox_west: 35.1, bbox_south: 33, bbox_east: 35.15, bbox_north: 33.05, is_approved_for_coordinates: true }] }) }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('catalog preview', () => {
@@ -14,6 +15,8 @@ describe('catalog preview', () => {
     render(<ModelPreviewDialog model={model} open onOpenChange={vi.fn()} />);
     const props = realProps.mock.lastCall?.[0];
     expect(props.area).toEqual({ west: 35.1, south: 33, east: 35.2, north: 33.1 });
+    expect(props.preferId).toBe('preview-model');
+    expect(props.overlays).toEqual([{ id: 'm:A1', bbox: { west: 35.1, south: 33, east: 35.15, north: 33.05 }, status: 'approved', selected: undefined, hovered: false }]);
     const demo = props.demo();
     expect(demo.props.subtiles).toEqual([]);
     expect(demo.props.onSelect).toBeUndefined();

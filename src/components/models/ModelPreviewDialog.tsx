@@ -5,6 +5,8 @@ import { ArrowLeft } from 'lucide-react';
 import { DemoSurfaceView } from '@/components/map/DemoSurfaceView';
 import { RealModel3DView } from '@/components/mapcolonies/RealModel3DView';
 import { boundsOf } from '@/lib/mapcolonies/match';
+import { tileOverlays } from '@/lib/mapcolonies/overlays';
+import { useRealModels } from '@/hooks/useRealModels';
 import { ModelMetadata } from './ModelMetadata';
 import type { Model, Subtile } from '@/lib/cea/rules';
 
@@ -21,6 +23,7 @@ interface ModelPreviewDialogProps {
 }
 
 export function ModelPreviewDialog({ model, open, onOpenChange, onContinue }: ModelPreviewDialogProps) {
+  const { subtilesFor } = useRealModels();
   if (!model) return null;
 
   return (
@@ -48,6 +51,8 @@ export function ModelPreviewDialog({ model, open, onOpenChange, onContinue }: Mo
         <div className="absolute inset-x-0 bottom-0 top-20 isolate z-0">
           <RealModel3DView
             area={boundsOf(model)}
+            preferId={model.id}
+            overlays={tileOverlays({ model, subtiles: subtilesFor([model.id]), effectiveApproved: approved })}
             demo={() => (
               <DemoSurfaceView
                 model={model}

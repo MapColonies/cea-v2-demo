@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { useRealModels } from '@/hooks/useRealModels';
 import {
   ModelIdentificationWizard,
   statusOf,
-  type SubtileStats,
 } from '@/components/models/ModelIdentificationWizard';
 import { SubtileApprovalFlow, type ApprovalSession } from '@/components/models/SubtileApprovalFlow';
 import { Button } from '@/components/ui/button';
@@ -18,38 +17,16 @@ import type { Database } from '@/integrations/supabase/types';
 type Model = Database['public']['Tables']['models']['Row'];
 
 export function Dashboard() {
-  const [models, setModels] = useState<Model[]>([]);
-  const [subtileStats, setSubtileStats] = useState<SubtileStats>({});
+  // Approval catalogue = real MapColonies 3D Tiles models; approvals are demo-only (browser-local).
+  const { models, subtileStats, loading, error: catalogError, reload } = useRealModels();
   const [confirmedModel, setConfirmedModel] = useState<Model | null>(null);
   const [session, setSession] = useState<ApprovalSession | null>(null);
-  const [loading, setLoading] = useState(true);
   const [referenceIds, setReferenceIds] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<'models' | 'mapcolonies'>('mapcolonies');
-  const toggleReference = (id: string) => setReferenceIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
-  const { user, signOut, isAdmin, userRole, username } = useAuth();
-
-  const fetchData = async () => {
-    const [{ data: modelRows, error }, { data: tiles }] = await Promise.all([
-      supabase.from('models').select('*').eq('is_published', true).order('name'),
-      supabase.from('model_subtiles').select('id, model_id, is_approved_for_coordinates'),
-    ]);
-
-    if (error) console.error('Error fetching models:', error);
-    setModels(modelRows || []);
-
-    const stats: SubtileStats = {};
-    (tiles || []).forEach((tile) => {
-      const entry = (stats[tile.model_id] ||= { total: 0, approved: 0 });
-      entry.total += 1;
-      if (tile.is_approved_for_coordinates) entry.approved += 1;
-    });
-    setSubtileStats(stats);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const [view, setView] = useState<'models' | 'mapcolonies'>('models');
+  const toggleReference = (id: string) => setReferenceIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const { signOut, isAdmin, userRole, username } = useAuth();
+  // Keep the open approval workspace on the latest row of its model.
+  const activeModel = confirmedModel ? models.find(m => m.id === confirmedModel.id) ?? confirmedModel : null;
 
   const approvedModels = models.filter((m) => statusOf(m, subtileStats) === 'approved').length;
   const partialModels = models.filter((m) => statusOf(m, subtileStats) === 'partial').length;
@@ -74,7 +51,7 @@ export function Dashboard() {
                 {confirmedModel
                   ? confirmedModel.name
                   : view === 'mapcolonies'
-                  ? 'מודלים תלת־ממדיים פוטוריאליסטיים מקטלוג MapColonies'
+                  ? 'קטלוג MapColonies — מודלים תלת־ממדיים פוטוריאליסטיים'
                   : `${models.length} מודלים • ${approvedModels} מאושרים • ${partialModels} מאושרים חלקית`}
               </p>
             </div>
@@ -94,7 +71,7 @@ export function Dashboard() {
             {!confirmedModel && (
               <Button variant={view === 'mapcolonies' ? 'default' : 'outline'} size="sm" aria-pressed={view === 'mapcolonies'} onClick={() => setView(v => v === 'mapcolonies' ? 'models' : 'mapcolonies')} title="שכבות תלת־ממד פוטוריאליסטיות מקטלוג MapColonies">
                 <Globe2 className="w-4 h-4 ml-2" />
-                {view === 'mapcolonies' ? 'מודלים לאישור (דמו)' : 'מודלי MapColonies'}
+                {view === 'mapcolonies' ? 'חזרה לאישור מודלים' : 'קטלוג MapColonies'}
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={exportTestPlanToExcel} title="הורדת קובץ Excel עם תרחישי בדיקה ידניים למערכת">
@@ -112,6 +89,11 @@ export function Dashboard() {
       <div className="flex-1 overflow-hidden">
         {view === 'mapcolonies' && !confirmedModel ? (
           <MapColoniesCatalog />
+        ) : catalogError && !models.length ? (
+          <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
+            <p className="text-destructive">{catalogError}</p>
+            <Button variant="outline" onClick={reload}>נסה שוב</Button>
+          </div>
         ) : loading ? (
           <div className="h-full flex items-center justify-center">
             <div className="space-y-3 w-full max-w-md p-4">
@@ -124,13 +106,13 @@ export function Dashboard() {
           <div className="h-full flex justify-center">
             <div className="w-full max-w-7xl h-full">
               <SubtileApprovalFlow
-                model={confirmedModel}
+                model={activeModel!}
                 allModels={models}
                 initialReferenceIds={referenceIds}
                 session={session}
                 onSessionVerified={setSession}
                 onBack={() => setConfirmedModel(null)}
-                 onSaved={() => { setConfirmedModel(null); setSession(null); setReferenceIds(new Set()); void supabase.rpc('end_approval_session'); void fetchData(); }}
+                 onSaved={() => { setConfirmedModel(null); setSession(null); setReferenceIds(new Set()); }}
               />
             </div>
           </div>

@@ -6,7 +6,7 @@ import { SubtileApprovalFlow } from './SubtileApprovalFlow';
 
 const mocks = vi.hoisted(() => ({ admin: true, acquire: vi.fn(), canEdit: false, verified: false, verify: vi.fn(), rpc: vi.fn(), refresh: vi.fn(), tiles: [{ id: 'tile-1', code: 'A1', accuracy: 1, capture_date: '2026-01-01', is_approved_for_coordinates: false }, { id: 'tile-2', code: 'A2', accuracy: 3, capture_date: '2026-10-01', is_approved_for_coordinates: true }] }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'admin', app_metadata: { provider: 'google' } }, isAdmin: mocks.admin }) }));
-vi.mock('@/hooks/useApprovalAccess', () => ({ useApprovalAccess: () => ({ canEdit: mocks.canEdit, editing: false, acquiring: false, lease: null, approval: { valid: mocks.verified, performer_name: 'Previous approver' }, error: '', acquire: mocks.acquire, verify: mocks.verify, refresh: mocks.refresh }) }));
+vi.mock('@/hooks/useDemoApprovalAccess', () => ({ useDemoApprovalAccess: () => ({ canEdit: mocks.canEdit, editing: false, acquiring: false, lease: null, approval: { valid: mocks.verified, performer_name: 'Previous approver' }, error: '', acquire: mocks.acquire, verify: mocks.verify, refresh: mocks.refresh }) }));
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => false }));
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -18,7 +18,8 @@ vi.mock('@/components/ui/resizable', () => ({
 }));
 vi.mock('@/components/map/SubtileMap', () => ({ SubtileMap: ({ subtiles, onSelect }: {subtiles: {id:string}[]; onSelect:(tile:{id:string})=>void}) => <button onClick={()=>onSelect(subtiles[0])}>map-pick-first</button> }));
 vi.mock('./FlowSteps', () => ({ FlowStepsIndicator: () => null }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: mocks.rpc, from: (table: string) => ({ select: () => ({ eq: () => ({ order: () => table === 'model_subtiles' ? Promise.resolve({ data: mocks.tiles }) : { limit: async () => ({ data: [] }) } }) }) }) } }));
+vi.mock('@/hooks/useRealModels', () => ({ useRealModels: () => ({ subtilesFor: () => mocks.tiles }) }));
+vi.mock('@/lib/demo/demoStore', () => ({ demoStore: { logsFor: () => [], statusLogsFor: () => [], saveWorkspace: (args: unknown) => mocks.rpc(args) } }));
 
 const model = { id: 'model-1', name: 'Model', bbox_north: 32, bbox_south: 31, bbox_east: 35, bbox_west: 34 } as Database['public']['Tables']['models']['Row'];
 async function selectTile() {
@@ -39,9 +40,9 @@ describe('selected polygon approval', () => {
     expect(mocks.acquire).not.toHaveBeenCalled();
   });
   it('stages model rejection without approving tiles and allows restoration',async()=>{mocks.canEdit=true;await selectTile();fireEvent.click(screen.getByRole('checkbox',{name:'לא מאושר לשימוש'}));expect(screen.getByRole('button',{name:/^אשר נבחרים$/})).toBeDisabled();expect(screen.getByRole('button',{name:'שמור שינויים'})).toBeEnabled();fireEvent.click(screen.getByRole('checkbox',{name:'לא מאושר לשימוש'}));expect(screen.getByRole('button',{name:/^אשר נבחרים$/})).toBeEnabled();expect(screen.getByRole('button',{name:'שמור שינויים'})).toBeDisabled();});
-  it('confirms saving on the final screen before returning after several seconds',async()=>{mocks.canEdit=true;mocks.verify.mockResolvedValue(true);mocks.rpc.mockResolvedValue({data:1,error:null});const saved=vi.fn();render(<SubtileApprovalFlow model={model} session={null} onSessionVerified={vi.fn()} onBack={vi.fn()} onSaved={saved}/>);fireEvent.click(await screen.findByRole('checkbox',{name:'בחר A1'}));fireEvent.click(screen.getByRole('button',{name:/^אשר נבחרים$/}));await waitFor(()=>expect(screen.getByRole('button',{name:'שמור שינויים'})).toBeEnabled());fireEvent.click(screen.getByRole('button',{name:'שמור שינויים'}));fireEvent.change(screen.getByLabelText('שם מלא של המבצע *'),{target:{value:'Verified Name'}});fireEvent.click(screen.getByRole('button',{name:'המשך לססמת מנהל'}));fireEvent.change(screen.getByLabelText('ססמת מנהל *'),{target:{value:'test-password'}});fireEvent.click(screen.getByRole('button',{name:'אשר ושמור'}));await waitFor(()=>expect(screen.queryByLabelText('ססמת מנהל *')).not.toBeInTheDocument());expect(saved).not.toHaveBeenCalled();expect(screen.getByRole('button',{name:'חזור'})).toBeDisabled();await waitFor(()=>expect(saved).toHaveBeenCalledOnce(),{timeout:6500});expect(mocks.rpc).toHaveBeenCalledWith('save_model_workspace',expect.objectContaining({_rejected:false,_expected_rejected:false,_performer_name:'Verified Name'}));},8000);
+  it('confirms saving on the final screen before returning after several seconds',async()=>{mocks.canEdit=true;mocks.verify.mockResolvedValue(true);mocks.rpc.mockReturnValue(1);const saved=vi.fn();render(<SubtileApprovalFlow model={model} session={null} onSessionVerified={vi.fn()} onBack={vi.fn()} onSaved={saved}/>);fireEvent.click(await screen.findByRole('checkbox',{name:'בחר A1'}));fireEvent.click(screen.getByRole('button',{name:/^אשר נבחרים$/}));await waitFor(()=>expect(screen.getByRole('button',{name:'שמור שינויים'})).toBeEnabled());fireEvent.click(screen.getByRole('button',{name:'שמור שינויים'}));fireEvent.change(screen.getByLabelText('שם מלא של המבצע *'),{target:{value:'Verified Name'}});fireEvent.click(screen.getByRole('button',{name:'המשך לססמת מנהל'}));fireEvent.change(screen.getByLabelText('ססמת מנהל *'),{target:{value:'test-password'}});fireEvent.click(screen.getByRole('button',{name:'אשר ושמור'}));await waitFor(()=>expect(screen.queryByLabelText('ססמת מנהל *')).not.toBeInTheDocument());expect(saved).not.toHaveBeenCalled();expect(screen.getByRole('button',{name:'חזור'})).toBeDisabled();await waitFor(()=>expect(saved).toHaveBeenCalledOnce(),{timeout:6500});expect(mocks.rpc).toHaveBeenCalledWith(expect.objectContaining({modelId:'model-1',rejected:false,performerName:'Verified Name',changes:[{subtile_id:'tile-1',approved:true}]}));},8000);
   it('restores a rejected model and stages newly selected approvals together',async()=>{
-    mocks.canEdit=true;mocks.verify.mockResolvedValue(true);mocks.rpc.mockResolvedValue({data:1,error:null});
+    mocks.canEdit=true;mocks.verify.mockResolvedValue(true);mocks.rpc.mockReturnValue(1);
     render(<SubtileApprovalFlow model={{...model,is_rejected:true}} session={null} onSessionVerified={vi.fn()} onBack={vi.fn()} onSaved={vi.fn()}/>);
     fireEvent.click(await screen.findByRole('checkbox',{name:'לא מאושר לשימוש'}));
     fireEvent.click(screen.getByRole('checkbox',{name:'בחר A1'}));
@@ -52,7 +53,7 @@ describe('selected polygon approval', () => {
     fireEvent.click(screen.getByRole('button',{name:'המשך לססמת מנהל'}));
     fireEvent.change(screen.getByLabelText('ססמת מנהל *'),{target:{value:'test-password'}});
     fireEvent.click(screen.getByRole('button',{name:'אשר ושמור'}));
-    await waitFor(()=>expect(mocks.rpc).toHaveBeenCalledWith('save_model_workspace',expect.objectContaining({_rejected:false,_expected_rejected:true,_changes:[{subtile_id:'tile-1',approved:true,expected_approved:false}]})));
+    await waitFor(()=>expect(mocks.rpc).toHaveBeenCalledWith(expect.objectContaining({rejected:false,changes:[{subtile_id:'tile-1',approved:true}]})));
   });
   it('accumulates approvals and revocations across accuracy filters and undoes only one delta', async () => {
     mocks.canEdit = true;

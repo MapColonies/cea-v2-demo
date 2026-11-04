@@ -1,5 +1,7 @@
 # CEA v2 upgrade
 
+- [x] Demo approvals on real MapColonies models: approval workflow is home again, catalogue = real 3D Tiles records with generated sub-tile grids, browser-local demo approvals; sub-tiles draped and selectable on real 3D; 3D navigation controls; per-tile load diagnostics. 72 tests pass; draping/picking/navigation verified on a local tileset. Live tiles to verify on VPN.
+
 - [x] MapColonies 3D catalogue view: CSW GetRecords (paged), 3D Tiles/all filter, footprints on 2D map, real photorealistic 3D Tiles viewer with WGS84/Israel grid/ellipsoidal-height readout; 7 new tests, local tileset render verified. Live catalogue/tiles must be verified on VPN (CORS for the app origin).
 
 - [x] Add orthophoto background, remove capture-date filtering, rename statuses without changing protections, and visibly identify map-selected subtiles; 33 tests pass, authenticated browser confirms loaded imagery and exact focused list entry without runtime errors.

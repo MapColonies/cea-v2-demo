@@ -12,9 +12,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { useApprovalAccess } from '@/hooks/useApprovalAccess';
+import { useDemoApprovalAccess } from '@/hooks/useDemoApprovalAccess';
+import { useRealModels } from '@/hooks/useRealModels';
+import { demoStore } from '@/lib/demo/demoStore';
 import { toast } from 'sonner';
 import { SubtileMap } from '@/components/map/SubtileMap';
 import { ReferenceUpload } from '@/components/map/ReferenceUpload';
@@ -69,7 +70,9 @@ export function SubtileApprovalFlow({
   initialReferenceIds = new Set(),
 }: Props) {
   const { user, isAdmin } = useAuth();
-  const access = useApprovalAccess(model.id);
+  // Demo mode: real MapColonies models, approvals stay in this browser and have no operational effect.
+  const access = useDemoApprovalAccess(model.id);
+  const { subtilesFor } = useRealModels();
   const isMobile = useIsMobile();
   const panelRef = useRef<ImperativePanelHandle>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
@@ -126,19 +129,9 @@ export function SubtileApprovalFlow({
   };
 
   const loadData = async () => {
-    const [{ data: tiles }, { data: logRows }, {data: modelLogs}] = await Promise.all([
-      supabase.from('model_subtiles').select('*').eq('model_id', model.id).order('code'),
-      supabase
-        .from('subtile_approval_logs')
-        .select('*')
-        .eq('model_id', model.id)
-        .order('created_at', { ascending: false })
-        .limit(100),
-      supabase.from('model_status_logs').select('*').eq('model_id',model.id).order('created_at',{ascending:false}).limit(100),
-    ]);
-    setSubtiles(tiles || []);
-    setLogs(logRows || []);
-    setStatusLogs(modelLogs || []);
+    setSubtiles([...subtilesFor([model.id])].sort((a, b) => a.code.localeCompare(b.code)));
+    setLogs(demoStore.logsFor(model.id) as unknown as LogRow[]);
+    setStatusLogs(demoStore.statusLogsFor(model.id) as unknown as Database['public']['Tables']['model_status_logs']['Row'][]);
     setLoading(false);
   };
 
@@ -227,25 +220,19 @@ export function SubtileApprovalFlow({
     if (!user) return;
     setSaving(true);
     try {
-      const { data: savedCount, error: saveError } = await supabase.rpc(
-        'save_model_workspace',
-        {
-          _model_id: model.id,
-          _rejected: rejected,
-          _expected_rejected: Boolean(model.is_rejected),
-          _changes: changes.map((tile) => ({
-            subtile_id: tile.id,
-            approved: Boolean(pending[tile.id]),
-            expected_approved: tile.is_approved_for_coordinates,
-          })),
-          _performer_name: name,
-          _notes: notes || undefined,
-        },
-      );
-      if (saveError) throw saveError;
+      const savedCount = demoStore.saveWorkspace({
+        modelId: model.id,
+        rejected,
+        changes: changes.map((tile) => ({ subtile_id: tile.id, approved: Boolean(pending[tile.id]) })),
+        performerName: name,
+        performedBy: user.id,
+        notes: notes || undefined,
+      });
       if (savedCount !== changes.length) {
         throw new Error('חלק מהאזורים השתנו במקביל. נא לרענן ולנסות שוב.');
       }
+      setLogs(demoStore.logsFor(model.id) as unknown as LogRow[]);
+      setStatusLogs(demoStore.statusLogsFor(model.id) as unknown as Database['public']['Tables']['model_status_logs']['Row'][]);
 
       toast.success(statusChanged ? (rejected?'המודל סומן כלא מאושר וכל האישורים בוטלו':'המודל הוחזר לבדיקה') : `נשמרו ${savedCount} שינויים בתתי-אזורים`);
       setPending({});
@@ -315,7 +302,7 @@ export function SubtileApprovalFlow({
           <Alert className="border-emerald-500 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100 dark:border-emerald-800">
             <AlertTriangle className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
             <AlertDescription className="text-emerald-800 dark:text-emerald-200">
-              עומדים להישמר {changes.length} שינויים בתתי-אזורים. תתי-אזורים מאושרים ייחשפו לגורמים מבצעיים לחילוץ נ.צ.
+              עומדים להישמר {changes.length} שינויים בתתי-אזורים (מצב דמו — נשמר בדפדפן זה בלבד, ללא השפעה מבצעית).
             </AlertDescription>
           </Alert>
           <div className="space-y-2">
@@ -374,29 +361,7 @@ export function SubtileApprovalFlow({
             />
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
-          {!user?.identities?.some(i => i.provider === 'email') && (
-            <div className="space-y-2 rounded-md border border-border p-3">
-              <p className="text-xs text-muted-foreground">
-                לחשבון Google אין ססמה. ניתן לקבוע ססמת מנהל לחשבון זה (לפחות 6 תווים) ואז לאשר איתה.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={saving || password.length < 6}
-                onClick={async () => {
-                  setSaving(true);
-                  const { error: e } = await supabase.auth.updateUser({ password });
-                  setSaving(false);
-                  if (e) { setError(`לא ניתן לקבוע ססמה: ${e.message}`); return; }
-                  toast.success('ססמת המנהל נקבעה');
-                  await handleAdminPassword();
-                }}
-              >
-                קבע ססמה זו ואשר
-              </Button>
-            </div>
-          )}
+          <p className="text-xs text-muted-foreground">מצב דמו — כל ססמה מתקבלת והאישור נשמר רק בדפדפן זה.</p>
         </div>
       );
     }
@@ -578,6 +543,7 @@ export function SubtileApprovalFlow({
         {access.lease && !access.lease.owned && <Badge variant="outline">המודל נעול לעריכה על ידי {access.lease.owner_name}</Badge>}
         {access.approval.valid && <Badge className="bg-success text-success-foreground">סשן אישור מאומת — {access.approval.performer_name}</Badge>}
         {access.error && <p className="text-xs text-destructive">{access.error}</p>}
+        <Badge variant="outline" className="text-warning border-warning/50" title="האישורים נשמרים בדפדפן זה בלבד ואינם משפיעים על MapColonies או על מערכות מבצעיות">מצב דמו — אישורים ללא השפעה מבצעית</Badge>
       </div>
       <ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className="flex-1 min-h-[750px] md:min-h-0" dir="rtl">
         <ResizablePanel ref={panelRef} defaultSize={isMobile ? 35 : 36} minSize={isMobile ? 25 : 24} maxSize={isMobile ? 60 : 55} collapsible collapsedSize={0} onCollapse={() => setPanelCollapsed(true)} onExpand={() => setPanelCollapsed(false)}>

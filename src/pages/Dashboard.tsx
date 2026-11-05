@@ -61,6 +61,18 @@ export function Dashboard() {
 
           <div className="flex flex-wrap items-center gap-2">
             <EnvironmentSwitcher disabled={Boolean(confirmedModel)} />
+            <div className="h-5 w-px bg-border shrink-0" />
+            {!confirmedModel && (
+              <Button variant={view === 'fullscreen3d' ? 'default' : 'outline'} size="sm" aria-pressed={view === 'fullscreen3d'} onClick={() => setView(v => v === 'fullscreen3d' ? 'models' : 'fullscreen3d')} title="תצוגה מלאה — כל המודלים תלת־ממדיים">
+                <Maximize2 className="w-4 h-4 ml-2" />
+                {view === 'fullscreen3d' ? 'חזרה לרשימה' : 'תצוגה מלאה'}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={exportTestPlanToExcel} title="הורדת קובץ Excel עם תרחישי בדיקה ידניים למערכת">
+              <FileSpreadsheet className="w-4 h-4 ml-2" />
+              תוכנית בדיקות
+            </Button>
+            <div className="h-5 w-px bg-border shrink-0" />
             <div className="flex items-center gap-2">
               <User className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm">{username || 'משתמש'}</span>
@@ -71,19 +83,8 @@ export function Dashboard() {
                 <Badge className="bg-success text-success-foreground text-xs">סשן מאומת</Badge>
               )}
             </div>
-            {!confirmedModel && (
-              <Button variant={view === 'fullscreen3d' ? 'default' : 'outline'} size="sm" aria-pressed={view === 'fullscreen3d'} onClick={() => setView(v => v === 'fullscreen3d' ? 'models' : 'fullscreen3d')} title="תצוגה מלאה — כל המודלים תלת־ממדיים">
-                <Maximize2 className="w-4 h-4 ml-2" />
-                {view === 'fullscreen3d' ? 'חזרה לאישור מודלים' : 'תצוגה מלאה'}
-              </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={exportTestPlanToExcel} title="הורדת קובץ Excel עם תרחישי בדיקה ידניים למערכת">
-              <FileSpreadsheet className="w-4 h-4 ml-2" />
-              תוכנית בדיקות (Excel)
-            </Button>
-            <Button variant="outline" size="sm" onClick={signOut}>
-              <LogOut className="w-4 h-4 ml-2" />
-              התנתק
+            <Button variant="ghost" size="sm" onClick={signOut} title="התנתק">
+              <LogOut className="w-4 h-4" />
             </Button>
           </div>
         </div>

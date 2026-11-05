@@ -13,6 +13,7 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Home, Minus, Plus, RotateCcw
 import { projectedCoordinate } from '@/lib/cea/rules';
 import { tokenizedUrl } from '@/lib/mapcolonies/client';
 import type { McBBox } from '@/lib/mapcolonies/csw';
+import { cameraStore } from '@/lib/mapcolonies/cameraStore';
 
 // BVH-accelerated picking: photorealistic tiles carry hundreds of thousands of triangles.
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -244,7 +245,18 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     controls.addEventListener('start', stopSettle);
 
     // --- diagnostics ----------------------------------------------------------------------------------
-    const onRoot = () => { frame(); setSceneRevision(v => v + 1); };
+    const onRoot = () => {
+      const saved = cameraStore.get(tilesetUrl);
+      if (saved) {
+        camera.position.set(saved.px, saved.py, saved.pz);
+        camera.lookAt(saved.tx, saved.ty, saved.tz);
+        camera.updateMatrixWorld();
+        settle = null;
+      } else {
+        frame();
+      }
+      setSceneRevision(v => v + 1);
+    };
     const explain = (e: Error) => {
       const m = e?.message || String(e);
       if (/glTF versions|version.*1\.0|>=\s*2\.0/i.test(m)) return 'פורמט glTF 1.0 (ישן) — לא נתמך במנוע התצוגה';
@@ -255,10 +267,19 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
       if (/fetch|network|cors/i.test(m)) return 'בעיית רשת / CORS בגישה לשרת האריחים';
       return m.slice(0, 160);
     };
+    let autoRetryTimer = 0;
     const onError = (event: { error: Error; url: string | URL; tile: unknown }) => {
       console.error('3D Tiles load error', event.url?.toString().replace(/token=[^&]+/, 'token=…'), event.error);
-      if (!event.tile) setError(`לא ניתן לטעון את ה־tileset — ${explain(event.error)}`);
-      else setTileErrors(prev => ({ count: prev.count + 1, last: explain(event.error) }));
+      if (!event.tile) { setError(`לא ניתן לטעון את ה־tileset — ${explain(event.error)}`); return; }
+      setTileErrors(prev => ({ count: prev.count + 1, last: explain(event.error) }));
+      // Auto-retry once after 4 s — MapColonies often generates tiles on first request (cold cache → 404).
+      if (!autoRetryTimer) {
+        autoRetryTimer = window.setTimeout(() => {
+          autoRetryTimer = 0;
+          tiles.resetFailedTiles();
+          setTileErrors({ count: 0, last: '' });
+        }, 4000);
+      }
     };
     tiles.addEventListener('load-root-tileset', onRoot);
     tiles.addEventListener('load-error', onError);
@@ -496,8 +517,15 @@ export function Tiles3DView({ tilesetUrl, bbox, focus = null, overlays, onPickPo
     animate();
 
     return () => {
+      // Save camera position so it can be restored when this tileset is re-opened.
+      const dir = camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(1000);
+      cameraStore.set(tilesetUrl, {
+        px: camera.position.x, py: camera.position.y, pz: camera.position.z,
+        tx: camera.position.x + dir.x, ty: camera.position.y + dir.y, tz: camera.position.z + dir.z,
+      });
       cancelAnimationFrame(raf);
       window.clearTimeout(emptyTimer);
+      window.clearTimeout(autoRetryTimer);
       resize.disconnect();
       nav.current = null;
       ctx.current = null;

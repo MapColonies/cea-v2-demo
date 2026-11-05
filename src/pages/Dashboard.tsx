@@ -11,8 +11,7 @@ import { SubtileApprovalFlow, type ApprovalSession } from '@/components/models/S
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LogOut, User, ArrowRight, FileSpreadsheet, Globe2 } from 'lucide-react';
-import { MapColoniesCatalog } from '@/components/mapcolonies/MapColoniesCatalog';
+import { LogOut, User, ArrowRight, FileSpreadsheet } from 'lucide-react';
 import { exportTestPlanToExcel } from '@/lib/exportTestPlan';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -28,7 +27,6 @@ export function Dashboard() {
   const [confirmedModel, setConfirmedModel] = useState<Model | null>(null);
   const [session, setSession] = useState<ApprovalSession | null>(null);
   const [referenceIds, setReferenceIds] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<'models' | 'mapcolonies'>('models');
   const toggleReference = (id: string) => setReferenceIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const { signOut, isAdmin, userRole, username } = useAuth();
   // Keep the open approval workspace on the latest row of its model.
@@ -54,8 +52,6 @@ export function Dashboard() {
               <p className="truncate text-sm text-muted-foreground">
                 {confirmedModel
                   ? confirmedModel.name
-                  : view === 'mapcolonies'
-                  ? `קטלוג MapColonies ${envLabel} — מודלים תלת־ממדיים פוטוריאליסטיים`
                   : `${models.length} מודלים • ${approvedModels} מאושרים • ${partialModels} מאושרים חלקית • סביבת ${envLabel}`}
               </p>
             </div>
@@ -73,12 +69,6 @@ export function Dashboard() {
                 <Badge className="bg-success text-success-foreground text-xs">סשן מאומת</Badge>
               )}
             </div>
-            {!confirmedModel && (
-              <Button variant={view === 'mapcolonies' ? 'default' : 'outline'} size="sm" aria-pressed={view === 'mapcolonies'} onClick={() => setView(v => v === 'mapcolonies' ? 'models' : 'mapcolonies')} title="שכבות תלת־ממד פוטוריאליסטיות מקטלוג MapColonies">
-                <Globe2 className="w-4 h-4 ml-2" />
-                {view === 'mapcolonies' ? 'חזרה לאישור מודלים' : 'קטלוג MapColonies'}
-              </Button>
-            )}
             <Button variant="outline" size="sm" onClick={exportTestPlanToExcel} title="הורדת קובץ Excel עם תרחישי בדיקה ידניים למערכת">
               <FileSpreadsheet className="w-4 h-4 ml-2" />
               תוכנית בדיקות (Excel)
@@ -92,9 +82,7 @@ export function Dashboard() {
       </header>
 
       <div className="flex-1 overflow-hidden">
-        {view === 'mapcolonies' && !confirmedModel ? (
-          <MapColoniesCatalog key={env} />
-        ) : catalogError && !models.length ? (
+        {catalogError && !models.length ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="text-destructive">{catalogError}</p>
             <Button variant="outline" onClick={reload}>נסה שוב</Button>

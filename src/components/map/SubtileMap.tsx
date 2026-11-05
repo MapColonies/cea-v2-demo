@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
-import { MapContainer, Rectangle, Tooltip as LeafletTooltip, GeoJSON, useMapEvents } from 'react-leaflet';
+import { MapContainer, Rectangle, Polygon, Tooltip as LeafletTooltip, GeoJSON, useMapEvents } from 'react-leaflet';
 import { BasemapLayers } from './BasemapLayers';
-import type { Map as LeafletMap, Rectangle as LeafletRectangle } from 'leaflet';
+import type { Map as LeafletMap, Rectangle as LeafletRectangle, Polygon as LeafletPolygon } from 'leaflet';
+import type { DemoSubtile } from '@/lib/demo/realModels';
 import 'leaflet/dist/leaflet.css';
 import { Button } from '@/components/ui/button';
 import { useRealModels } from '@/hooks/useRealModels';
@@ -11,7 +12,7 @@ import type { FeatureCollection } from 'geojson';
 import { DemoSurfaceView } from './DemoSurfaceView';
 import { RealModel3DView } from '@/components/mapcolonies/RealModel3DView';
 import { boundsOf } from '@/lib/mapcolonies/match';
-import { tileOverlays, tileAt } from '@/lib/mapcolonies/overlays';
+import { tileOverlays } from '@/lib/mapcolonies/overlays';
 import { MapLegend } from './MapLegend';
 interface Props { localReference?:FeatureCollection|null; model:Model; subtiles:Subtile[]; pendingIds:Set<string>; effectiveApproved:(t:Subtile)=>boolean; onToggle:(t:Subtile)=>void; referenceModels?:Model[]; selectedIds?:Set<string>; focusedId?:string|null; hoveredId?:string|null; onSelect?:(t:Subtile)=>void; onHover?:(id:string|null)=>void; onVisibleChange?:(ids:string[])=>void; overlay?:ReactNode; }
 function Cursor({onMove}:{onMove:(s:string)=>void}) {useMapEvents({mousemove:e=>{const p=projectedCoordinate(e.latlng.lat,e.latlng.lng);onMove(`X ${p.x.toFixed(1)}  Y ${p.y.toFixed(1)}  Z —`);},mouseout:()=>onMove('X —  Y —  Z —')});return null;}
@@ -22,24 +23,28 @@ function StyledRectangle(props:ComponentProps<typeof Rectangle>) {
  useEffect(()=>{const el=ref.current?.getElement();if(!el)return;el.classList.toggle('cea-polygon-selected',className==='cea-polygon-selected');el.classList.toggle('cea-polygon-hover',className==='cea-polygon-hover');},[className]);
  return <Rectangle {...props} ref={ref}/>;
 }
+function StyledPolygon(props:ComponentProps<typeof Polygon>) {
+ const ref=useRef<LeafletPolygon>(null);
+ const className=props.pathOptions?.className;
+ useEffect(()=>{const el=ref.current?.getElement();if(!el)return;el.classList.toggle('cea-polygon-selected',className==='cea-polygon-selected');el.classList.toggle('cea-polygon-hover',className==='cea-polygon-hover');},[className]);
+ return <Polygon {...props} ref={ref}/>;
+}
 export function SubtileMap({localReference=null,model,subtiles,pendingIds,effectiveApproved,onToggle,referenceModels=[],selectedIds=new Set(),focusedId,hoveredId,onSelect,onHover,onVisibleChange,overlay}:Props) {
- const [map,setMap]=useState<LeafletMap|null>(null),[mode,setMode]=useState('map'),[readout,setReadout]=useState('X —  Y —  Z —'),[refs,setRefs]=useState<Subtile[]>([]),[refError,setRefError]=useState(false),[revision,setRevision]=useState(0);
+ const [map,setMap]=useState<LeafletMap|null>(null),[mode,setMode]=useState('map'),[readout,setReadout]=useState('X —  Y —  Z —'),[refs,setRefs]=useState<Subtile[]>([]),[refError,setRefError]=useState(false),[revision,setRevision]=useState(0),[fullscreen,setFullscreen]=useState(false);
  const ids=referenceModels.map(m=>m.id).sort().join(',');
  const { subtilesFor } = useRealModels();
  useEffect(()=>{setRefs(ids?subtilesFor(ids.split(',')):[]);setRefError(false);},[ids,subtilesFor]);
  useEffect(()=>{if(map&&mode==='map'){const ms=[model,...referenceModels];map.fitBounds([[Math.min(...ms.map(m=>Number(m.bbox_south))),Math.min(...ms.map(m=>Number(m.bbox_west)))],[Math.max(...ms.map(m=>Number(m.bbox_north))),Math.max(...ms.map(m=>Number(m.bbox_east)))]],{padding:[40,40],animate:false});map.invalidateSize();setRevision(v=>v+1);}},[map,model,ids,mode]);
  useEffect(()=>{if(!map||mode!=='map')return;const b=map.getBounds();onVisibleChange?.(subtiles.filter(t=>intersectsView(t,{bbox_south:b.getSouth(),bbox_north:b.getNorth(),bbox_west:b.getWest(),bbox_east:b.getEast()})).map(t=>t.id));},[map,mode,revision,subtiles,onVisibleChange]);
  useEffect(()=>{if(!map)return;const observer=new ResizeObserver(()=>map.invalidateSize({pan:false,animate:false}));observer.observe(map.getContainer());return()=>observer.disconnect();},[map]);
- const overlays=useMemo(()=>mode==='3d'?tileOverlays({model,referenceModels,subtiles,references:refs,effectiveApproved,selectedIds,hoveredId}):[],[mode,model,referenceModels,subtiles,refs,effectiveApproved,selectedIds,hoveredId]);
- const pick3d=(p:{lat:number;lng:number})=>{const t=tileAt(subtiles,p);if(t){if(onSelect)onSelect(t);else onToggle(t);}};
- const hover3d=(p:{lat:number;lng:number}|null)=>onHover?.(p?tileAt(subtiles,p)?.id??null:null);
+ const overlays=useMemo(()=>([]),[]);
  const token=(name:string)=>`hsl(${getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/\s+/g,', ')})`;
  const showLabel=(t:Subtile)=>{if(!map)return false;const a=map.latLngToContainerPoint([Number(t.bbox_north),Number(t.bbox_west)]),b=map.latLngToContainerPoint([Number(t.bbox_south),Number(t.bbox_east)]);const lines=tileAnnotation(t,[model,...referenceModels]),text=lines.reduce((a,b)=>a.length>b.length?a:b,'');return annotationFits(map.getZoom()>=14,Math.abs(a.x-b.x),Math.abs(a.y-b.y),Math.max(text.length*5.8,70),38);};
  return <div className="h-full flex flex-col min-h-0 gap-2">
   <div className="flex-1 relative isolate z-0 min-h-0 border rounded-md overflow-hidden">
-   {mode==='3d'?<RealModel3DView area={boundsOf(model)} preferId={model.id} overlays={overlays} onPickPoint={pick3d} onHoverPoint={hover3d} demo={()=><DemoSurfaceView model={model} subtiles={subtiles} referenceModels={referenceModels} referenceSubtiles={refs} effectiveApproved={effectiveApproved} onToggle={onToggle} target={null} localReference={localReference} selectedIds={selectedIds} focusedId={focusedId} hoveredId={hoveredId} onSelect={onSelect} onHover={onHover} onVisibleChange={onVisibleChange}/>}/>:<><MapContainer center={[(Number(model.bbox_north)+Number(model.bbox_south))/2,(Number(model.bbox_east)+Number(model.bbox_west))/2]} zoom={12} className="h-full w-full z-0" ref={setMap}><BasemapLayers/>
+   {mode==='3d'?<RealModel3DView area={boundsOf(model)} preferId={model.id} overlays={overlays} demo={()=><DemoSurfaceView model={model} subtiles={subtiles} referenceModels={referenceModels} referenceSubtiles={refs} effectiveApproved={effectiveApproved} onToggle={onToggle} target={null} localReference={localReference} selectedIds={selectedIds} focusedId={focusedId} hoveredId={hoveredId} onSelect={onSelect} onHover={onHover} onVisibleChange={onVisibleChange}/>}/>:<><MapContainer center={[(Number(model.bbox_north)+Number(model.bbox_south))/2,(Number(model.bbox_east)+Number(model.bbox_west))/2]} zoom={12} className="h-full w-full z-0" ref={setMap}><BasemapLayers/>
    {[model,...referenceModels].map(m=><Rectangle key={m.id} bounds={[[Number(m.bbox_south),Number(m.bbox_west)],[Number(m.bbox_north),Number(m.bbox_east)]]} pathOptions={{color:token(m.id===model.id?'--pending':'--reference'),weight:2,fill:false,dashArray:m.id===model.id?undefined:'5 4'}}><LeafletTooltip>{m.name}</LeafletTooltip></Rectangle>)}
-   {[...refs,...subtiles].map(t=>{const active=t.model_id===model.id,hover=active&&hoveredId===t.id,selected=active&&selectedIds.has(t.id),pending=pendingIds.has(t.id),approved=active?effectiveApproved(t):t.is_approved_for_coordinates,parent=[model,...referenceModels].find(m=>m.id===t.model_id),fillToken=tileColorToken(parent,approved,!active),color=token(fillToken==='--warning'?'--unapproved-stroke':fillToken);return <StyledRectangle key={t.id} bounds={[[Number(t.bbox_south),Number(t.bbox_west)],[Number(t.bbox_north),Number(t.bbox_east)]]} pathOptions={{className:selected?'cea-polygon-selected':hover?'cea-polygon-hover':'',color:selected?token('--selection'):hover?token('--hover-outline'):color,fillColor:token(fillToken),weight:selected?5:hover?3:pending?2:1.5,fillOpacity:active?.38:.18,dashArray:active?undefined:'4 4'}} eventHandlers={active?{click:()=>onSelect?onSelect(t):onToggle(t),mouseover:()=>onHover?.(t.id),mouseout:()=>onHover?.(null)}:undefined}>{showLabel(t)&&<LeafletTooltip permanent direction="center" className={active?'cea-map-label':'cea-map-label cea-map-reference'}><div dir="ltr">{tileAnnotation(t,[model,...referenceModels]).map((line,i)=><div key={i}>{line}</div>)}</div></LeafletTooltip>}</StyledRectangle>;})}
+   {[...refs,...subtiles].map(t=>{const active=t.model_id===model.id,hover=active&&hoveredId===t.id,selected=active&&selectedIds.has(t.id),pending=pendingIds.has(t.id),approved=active?effectiveApproved(t):t.is_approved_for_coordinates,parent=[model,...referenceModels].find(m=>m.id===t.model_id),fillToken=tileColorToken(parent,approved,!active),color=token(fillToken==='--warning'?'--unapproved-stroke':fillToken);const footprintCoords=(t as DemoSubtile).footprintCoords;const sharedPathOptions={className:selected?'cea-polygon-selected':hover?'cea-polygon-hover':'',color:selected?token('--selection'):hover?token('--hover-outline'):color,fillColor:token(fillToken),weight:selected?5:hover?3:pending?2:1.5,fillOpacity:active?.38:.18,dashArray:active?undefined:'4 4'};const sharedHandlers=active?{click:()=>onSelect?onSelect(t):onToggle(t),mouseover:()=>onHover?.(t.id),mouseout:()=>onHover?.(null)}:undefined;const label=showLabel(t)&&<LeafletTooltip permanent direction="center" className={active?'cea-map-label':'cea-map-label cea-map-reference'}><div dir="ltr">{tileAnnotation(t,[model,...referenceModels]).map((line,i)=><div key={i}>{line}</div>)}</div></LeafletTooltip>;if(footprintCoords){return <StyledPolygon key={t.id} positions={footprintCoords.map(([lng,lat])=>[lat,lng] as [number,number])} pathOptions={sharedPathOptions} eventHandlers={sharedHandlers}>{label}</StyledPolygon>;}return <StyledRectangle key={t.id} bounds={[[Number(t.bbox_south),Number(t.bbox_west)],[Number(t.bbox_north),Number(t.bbox_east)]]} pathOptions={sharedPathOptions} eventHandlers={sharedHandlers}>{label}</StyledRectangle>;})}
    {localReference&&<GeoJSON key={JSON.stringify(localReference).length} data={localReference} interactive={false} style={{color:token('--local-reference'),fillColor:token('--local-reference'),weight:2,fillOpacity:.12,dashArray:'6 4'}}/>}<ViewEvents onChange={()=>setRevision(v=>v+1)}/><Cursor onMove={setReadout}/></MapContainer><div className="cea-map-legend absolute bottom-6 left-16 bg-popover/95 text-popover-foreground border rounded p-2 text-xs font-mono pointer-events-none" dir="ltr" data-testid="map-readout">{readout}<span className="block text-muted-foreground">Israel Grid · גובה אמיתי זמין בתצוגת תלת־ממד</span></div></>}
    <div className="absolute top-2 right-2 left-12 z-[9999] flex flex-wrap items-start justify-center gap-2 pointer-events-none" dir="rtl">
 
@@ -47,7 +52,12 @@ export function SubtileMap({localReference=null,model,subtiles,pendingIds,effect
     <div className="basis-full flex justify-center"><MapLegend inline/></div>
    </div>
    <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[1000] flex flex-col overflow-hidden rounded-md border bg-popover/95 shadow" role="group" aria-label="מצב תצוגה"><Button size="sm" className="rounded-none" variant={mode==='map'?'default':'ghost'} aria-pressed={mode==='map'} onClick={()=>setMode('map')}>מפה</Button><Button size="sm" className="rounded-none" variant={mode==='3d'?'default':'ghost'} aria-pressed={mode==='3d'} onClick={()=>setMode('3d')}>תלת־ממד</Button></div>
+   {mode==='3d'&&<Button size="sm" variant="outline" className="absolute top-2 left-12 z-[1000] bg-popover/95" onClick={()=>setFullscreen(true)} title="פתח תצוגה מלאה">⛶ תצוגה מלאה</Button>}
    {overlay&&<div className="absolute bottom-2 right-2 z-[1000]">{overlay}</div>}
   </div>
+  {fullscreen&&<div className="fixed inset-0 z-[9999] bg-background flex flex-col">
+   <div className="absolute top-2 right-2 z-10"><Button size="sm" variant="outline" onClick={()=>setFullscreen(false)}>✕ סגור</Button></div>
+   <div className="flex-1 min-h-0"><RealModel3DView area={boundsOf(model)} preferId={model.id} overlays={[]} demo={()=><DemoSurfaceView model={model} subtiles={subtiles} referenceModels={referenceModels} referenceSubtiles={refs} effectiveApproved={effectiveApproved} onToggle={onToggle} target={null} localReference={localReference} selectedIds={selectedIds} focusedId={focusedId} hoveredId={hoveredId} onSelect={onSelect} onHover={onHover} onVisibleChange={onVisibleChange}/>}/></div>
+  </div>}
  </div>;
 }

@@ -11,7 +11,8 @@ import { SubtileApprovalFlow, type ApprovalSession } from '@/components/models/S
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LogOut, User, ArrowRight, FileSpreadsheet } from 'lucide-react';
+import { LogOut, User, ArrowRight, FileSpreadsheet, Maximize2 } from 'lucide-react';
+import { MapColoniesCatalog } from '@/components/mapcolonies/MapColoniesCatalog';
 import { exportTestPlanToExcel } from '@/lib/exportTestPlan';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -26,6 +27,7 @@ export function Dashboard() {
   useEffect(() => { setReferenceIds(new Set()); }, [env]);
   const [confirmedModel, setConfirmedModel] = useState<Model | null>(null);
   const [session, setSession] = useState<ApprovalSession | null>(null);
+  const [view, setView] = useState<'models' | 'fullscreen3d'>('models');
   const [referenceIds, setReferenceIds] = useState<Set<string>>(new Set());
   const toggleReference = (id: string) => setReferenceIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const { signOut, isAdmin, userRole, username } = useAuth();
@@ -69,6 +71,12 @@ export function Dashboard() {
                 <Badge className="bg-success text-success-foreground text-xs">סשן מאומת</Badge>
               )}
             </div>
+            {!confirmedModel && (
+              <Button variant={view === 'fullscreen3d' ? 'default' : 'outline'} size="sm" aria-pressed={view === 'fullscreen3d'} onClick={() => setView(v => v === 'fullscreen3d' ? 'models' : 'fullscreen3d')} title="תצוגה מלאה — כל המודלים תלת־ממדיים">
+                <Maximize2 className="w-4 h-4 ml-2" />
+                {view === 'fullscreen3d' ? 'חזרה לאישור מודלים' : 'תצוגה מלאה'}
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={exportTestPlanToExcel} title="הורדת קובץ Excel עם תרחישי בדיקה ידניים למערכת">
               <FileSpreadsheet className="w-4 h-4 ml-2" />
               תוכנית בדיקות (Excel)
@@ -82,7 +90,9 @@ export function Dashboard() {
       </header>
 
       <div className="flex-1 overflow-hidden">
-        {catalogError && !models.length ? (
+        {view === 'fullscreen3d' && !confirmedModel ? (
+          <MapColoniesCatalog key={env} />
+        ) : catalogError && !models.length ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="text-destructive">{catalogError}</p>
             <Button variant="outline" onClick={reload}>נסה שוב</Button>

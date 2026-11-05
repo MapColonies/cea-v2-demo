@@ -1,73 +1,141 @@
-# Welcome to your Lovable project
+# CEA v2 — Coordinate Extraction Approval Demo
 
-## Project info
+A demo approval workflow for MapColonies photorealistic 3D Tiles models.
+Approvers review and sign off on model sub-tiles (coordinate extraction areas) through a split 2D/3D workspace.
+All approvals are **browser-local** and have no operational effect on MapColonies or any production system.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+---
 
-## How can I edit this code?
+## What it does
 
-There are several ways of editing your application.
+- Loads the real MapColonies 3D catalogue (CSW GetRecords) for Prod / Int / Dev environments
+- Splits each model into a deterministic grid of sub-tiles clipped to the model footprint with realistic non-rectangular polygon shapes
+- Lets approvers review tiles in a **2D Leaflet map** (orthophoto basemap) and a **photorealistic 3D Tiles viewer** (Three.js / 3d-tiles-renderer)
+- Tracks approval state per tile in `localStorage` — no backend writes
+- Protects the save flow with an approver name + admin password step (demo: any password accepted)
+- Remembers 3D camera position per tileset when switching between views
+- Fullscreen 3D view available from within any model's approval workspace
 
-**Use Lovable**
+---
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Stack
 
-Changes made via Lovable will be committed automatically to this repo.
+| Layer | Library |
+|---|---|
+| Framework | React 18 + TypeScript + Vite |
+| UI | shadcn/ui + Tailwind CSS |
+| 2D map | React-Leaflet |
+| 3D engine | Three.js + 3d-tiles-renderer |
+| Auth / DB | Supabase (auth only; approvals are browser-local) |
+| Build | Vite + SWC |
 
-**Use your preferred IDE**
+---
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+## Getting started
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### Prerequisites
 
-Follow these steps:
+- Node.js ≥ 18 (or Bun)
+- MapColonies VPN access
+- MapColonies JWT tokens for the environments you want to use
+
+### Install
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+git clone https://github.com/MapColonies/cea-v2-demo.git
+cd cea-v2-demo
+npm install
 ```
 
-**Edit a file directly in GitHub**
+### Environment variables
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+Copy `.env.example` to `.env` (or create `.env`) and fill in your tokens:
 
-**Use GitHub Codespaces**
+```env
+# Supabase (required for auth)
+VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+# MapColonies JWT tokens — Prod token is the fallback for Int/Dev if not set
+VITE_MAPCOLONIES_TOKEN=<prod-token>
+VITE_MAPCOLONIES_TOKEN_INT=<int-token>
+VITE_MAPCOLONIES_TOKEN_DEV=<dev-token>
+```
 
-## What technologies are used for this project?
+> Tokens are injected into catalogue and tile requests by the Vite dev-server proxy.
+> The browser never talks directly to `*.mapcolonies.net` — all requests go through `localhost:8080/proxy/*`.
 
-This project is built with:
+### Run
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+```sh
+npm run dev
+# → http://localhost:8080
+```
 
-## How can I deploy this project?
+### Build
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+```sh
+npm run build        # outputs to dist/
+npm run preview      # serve dist/ locally
+```
 
-## Can I connect a custom domain to my Lovable project?
+---
 
-Yes, you can!
+## Architecture
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### Vite proxy (dev only)
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+All MapColonies traffic is routed through Vite's dev-server proxy to avoid CORS:
+
+| Proxy path | Target |
+|---|---|
+| `/proxy/catalog-prod` | `https://catalog.mapcolonies.net` + token injected |
+| `/proxy/catalog-int` | `https://catalog-int.mapcolonies.net` + token injected |
+| `/proxy/catalog-dev` | `https://catalog-dev.mapcolonies.net` + token injected |
+| `/proxy/tiles-prod` | `https://tiles.mapcolonies.net` |
+| `/proxy/tiles-int` | `https://tiles-int.mapcolonies.net` |
+| `/proxy/tiles-dev` | `https://tiles-dev.mapcolonies.net` |
+
+Tile requests get tokens added client-side via `tokenizedUrl()` before hitting the proxy.
+
+### Sub-tile generation (`src/lib/demo/realModels.ts`)
+
+Each catalogue record is split into a grid sized to ~16–36 roughly-square cells:
+
+1. Interior grid vertices are perturbed deterministically (up to 30% of cell size, seeded by record ID + grid position)
+2. Edge midpoints of each polygon are shared between adjacent tiles (same seed) so there are no gaps
+3. Cells partially outside the record footprint are clipped to the footprint using Sutherland-Hodgman
+4. Cells entirely outside the footprint are dropped
+
+### Camera memory (`src/lib/mapcolonies/cameraStore.ts`)
+
+Camera position is saved per `tilesetUrl` on `TilesRenderer` unmount and restored on mount.
+Switching between the embedded 3D panel and fullscreen preserves the exact viewpoint.
+
+---
+
+## Project structure
+
+```
+src/
+  components/
+    map/              # 2D Leaflet map, SubtileMap, ModelMap, overlays
+    mapcolonies/      # 3D viewer (Tiles3DView), RealModel3DView, catalog
+    models/           # Approval flow, model list, metadata
+  hooks/              # useRealModels, useMapColoniesCatalog, useAuth
+  lib/
+    cea/              # Approval rules, spatial helpers
+    demo/             # Sub-tile generation, demo approval store
+    mapcolonies/      # CSW client, token handling, environment store
+  pages/
+    Dashboard.tsx     # Main shell
+```
+
+---
+
+## Notes
+
+- **Demo mode**: approvals are stored in `localStorage`. Clearing browser data resets all approvals.
+- **VPN required**: catalogue and tile servers are not publicly accessible.
+- **Environment switcher**: top-right of the Dashboard; switches catalogue + token without page reload.
+- **Tile errors**: 404s on first load are normal — MapColonies generates tiles on demand. The viewer auto-retries once after 4 s.
